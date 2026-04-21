@@ -71,12 +71,68 @@ ALTER TABLE jours_travail ADD COLUMN IF NOT EXISTS type_paie text DEFAULT 'hors_
 -- Code patron par défaut
 INSERT INTO patrons (code_acces) VALUES ('BRIKMA2024') ON CONFLICT DO NOTHING;
 
--- 3. DÉSACTIVER RLS (app interne, accès par code seulement)
+-- 3. TABLES SOUMISSIONS ET LOCATIONS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS soumissions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  no_soumission TEXT NOT NULL,
+  client_nom TEXT, client_tel TEXT,
+  client_email TEXT, client_adresse TEXT,
+  chantier TEXT, type_batiment TEXT, description TEXT,
+  statut TEXT DEFAULT 'brouillon',
+  sous_total NUMERIC(10,2) DEFAULT 0,
+  tps NUMERIC(10,2) DEFAULT 0,
+  tvq NUMERIC(10,2) DEFAULT 0,
+  total NUMERIC(10,2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS soumission_lignes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  soumission_id UUID REFERENCES soumissions(id) ON DELETE CASCADE,
+  description TEXT, categorie TEXT DEFAULT 'Matériaux',
+  unite TEXT DEFAULT 'unité',
+  quantite NUMERIC(8,2) DEFAULT 1,
+  prix_unitaire NUMERIC(8,2) DEFAULT 0,
+  sous_total NUMERIC(10,2) DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS locations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  no_contrat TEXT NOT NULL,
+  client_nom TEXT, client_tel TEXT,
+  client_email TEXT, client_adresse TEXT,
+  id_type TEXT, id_no TEXT,
+  date_depart DATE, date_retour DATE, chantier TEXT,
+  mode_paiement TEXT, depot NUMERIC(8,2) DEFAULT 0,
+  statut TEXT DEFAULT 'actif',
+  sous_total NUMERIC(10,2) DEFAULT 0,
+  tps NUMERIC(10,2) DEFAULT 0,
+  tvq NUMERIC(10,2) DEFAULT 0,
+  total NUMERIC(10,2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS location_articles (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  location_id UUID REFERENCES locations(id) ON DELETE CASCADE,
+  article TEXT, categorie TEXT DEFAULT 'Échafaudage',
+  quantite NUMERIC(6,2) DEFAULT 1,
+  prix_jour NUMERIC(8,2) DEFAULT 0,
+  sous_total NUMERIC(10,2) DEFAULT 0
+);
+
+-- 4. DÉSACTIVER RLS (app interne, accès par code seulement)
 -- ============================================================
 
 ALTER TABLE employes DISABLE ROW LEVEL SECURITY;
 ALTER TABLE patrons DISABLE ROW LEVEL SECURITY;
 ALTER TABLE feuilles_temps DISABLE ROW LEVEL SECURITY;
 ALTER TABLE jours_travail DISABLE ROW LEVEL SECURITY;
+ALTER TABLE soumissions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE soumission_lignes DISABLE ROW LEVEL SECURITY;
+ALTER TABLE locations DISABLE ROW LEVEL SECURITY;
+ALTER TABLE location_articles DISABLE ROW LEVEL SECURITY;
 
 -- Fin du script

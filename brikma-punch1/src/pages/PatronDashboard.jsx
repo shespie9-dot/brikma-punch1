@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import Soumission from './Soumission'
+import Location from './Location'
 
 const css = `
   :root{--navy:#1e3a5f;--blue:#2563a8;--blue2:#3b82c4;--brick:#c0623a;--green:#1a7a4a;--green2:#22a060;--orange:#d97706;--red:#c0392b;--yellow:#e6a817;--bg:#0f1923;--card:#1a2a3a;--border:#2e4060;--text:#e8edf2;--muted:#6b7a8d;}
@@ -120,7 +122,7 @@ export default function PatronDashboard({onLogout}){
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.5rem',letterSpacing:'3px',color:'white'}}>Brikma Construction — Dashboard Patron</div>
           </div>
           <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
-            {[['dashboard','📊 Dashboard'],['employes','👷 Employés']].map(([v,lbl])=>(
+            {[['dashboard','📊 Dashboard'],['employes','👷 Employés'],['soumissions','📋 Soumissions'],['locations','🏗 Locations']].map(([v,lbl])=>(
               <button key={v} onClick={()=>setView(v)} style={{padding:'7px 14px',borderRadius:'6px',border:`1.5px solid ${view===v?'var(--blue2)':'var(--border)'}`,background:view===v?'rgba(59,130,196,0.2)':'transparent',color:view===v?'var(--blue2)':'var(--muted)',fontSize:'0.82rem',fontWeight:'600',cursor:'pointer'}}>{lbl}</button>
             ))}
             <button onClick={onLogout} style={{padding:'7px 12px',borderRadius:'6px',border:'1px solid var(--border)',background:'transparent',color:'var(--muted)',fontSize:'0.78rem',cursor:'pointer'}}>⬅ Sortir</button>
@@ -305,6 +307,12 @@ export default function PatronDashboard({onLogout}){
             ))}
           </div>
         </>}
+
+        {/* ── SOUMISSIONS ── */}
+        {view==='soumissions' && <Soumission/>}
+
+        {/* ── LOCATIONS ── */}
+        {view==='locations' && <Location/>}
 
       </div>
     </div>
