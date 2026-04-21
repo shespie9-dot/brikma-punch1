@@ -28,12 +28,9 @@ export default function Login({ onLogin }) {
     setLoading(true); setErr('')
     try {
       if (role === 'patron') {
-        const { data, error } = await supabase.from('patrons').select('*').eq('code_acces', code.trim().toUpperCase()).maybeSingle()
-        if (data) {
-          onLogin({ role: 'patron' }); return
-        }
-        // Si erreur Supabase (table absente, RLS, réseau) → fallback code hardcodé
-        if (error && code.trim().toUpperCase() === 'BRIKMA2024') {
+        const { data } = await supabase.from('patrons').select('*').eq('code_acces', code.trim().toUpperCase()).maybeSingle()
+        // Accepte si trouvé en DB OU si le code hardcodé correspond
+        if (data || code.trim().toUpperCase() === 'BRIKMA2024') {
           onLogin({ role: 'patron' }); return
         }
         setErr('Code patron invalide')
@@ -43,12 +40,7 @@ export default function Login({ onLogin }) {
         else if (!data) { setErr('Code employé introuvable ou inactif') }
         else { onLogin({ role: 'employe', employe: data }); return }
       }
-    } catch(e) {
-      if (role === 'patron' && code.trim().toUpperCase() === 'BRIKMA2024') {
-        onLogin({ role: 'patron' }); return
-      }
-      setErr('Erreur de connexion')
-    }
+    } catch(e) { setErr('Erreur de connexion') }
     setLoading(false)
   }
 
@@ -68,7 +60,7 @@ export default function Login({ onLogin }) {
         <label style={S.label}>{role==='patron' ? 'Code patron' : 'Ton code employé'}</label>
         <input
           style={S.input}
-          placeholder={role==='patron' ? 'ex: BRIKMA2024' : 'ex: EMP001'}
+          placeholder={role==='patron' ? 'Code patron' : 'ex: EMP001'}
           value={code}
           onChange={e=>setCode(e.target.value)}
           onKeyDown={e=>e.key==='Enter'&&handleLogin()}
