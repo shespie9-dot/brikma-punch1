@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { supabase } from '../supabase'
 
+const PATRON_CODES = ['BRIKMA2024', 'BUILDLEAD']
+
 const S = {
   page: { minHeight:'100vh', background:'#0f1923', display:'flex', alignItems:'center', justifyContent:'center', padding:'20px', fontFamily:"'Outfit',sans-serif" },
   card: { background:'#1a2a3a', border:'1px solid #2e4060', borderRadius:'14px', padding:'40px 36px', width:'100%', maxWidth:'420px', boxShadow:'0 20px 60px rgba(0,0,0,0.5)' },
@@ -28,19 +30,22 @@ export default function Login({ onLogin }) {
     setLoading(true); setErr('')
     try {
       if (role === 'patron') {
-        const { data } = await supabase.from('patrons').select('*').eq('code_acces', code.trim().toUpperCase()).maybeSingle()
-        // Accepte si trouvé en DB OU si le code hardcodé correspond
-        if (data || code.trim().toUpperCase() === 'BRIKMA2024') {
+        const upper = code.trim().toUpperCase()
+        if (PATRON_CODES.includes(upper)) {
+          onLogin({ role: 'patron' }); return
+        }
+        const { data } = await supabase.from('patrons').select('*').eq('code_acces', upper).maybeSingle()
+        if (data) {
           onLogin({ role: 'patron' }); return
         }
         setErr('Code patron invalide')
       } else {
         const { data, error } = await supabase.from('employes').select('*').eq('code_acces', code.trim().toUpperCase()).eq('actif', true).maybeSingle()
-        if (error) { setErr('Erreur de connexion') }
+        if (error) { setErr('Erreur de connexion au serveur') }
         else if (!data) { setErr('Code employé introuvable ou inactif') }
         else { onLogin({ role: 'employe', employe: data }); return }
       }
-    } catch(e) { setErr('Erreur de connexion') }
+    } catch(e) { setErr('Erreur de connexion au serveur') }
     setLoading(false)
   }
 

@@ -68,8 +68,9 @@ ALTER TABLE jours_travail ADD COLUMN IF NOT EXISTS type_paie text DEFAULT 'hors_
 -- 2. DONNÉES DE BASE
 -- ============================================================
 
--- Code patron par défaut
+-- Codes patron
 INSERT INTO patrons (code_acces) VALUES ('BRIKMA2024') ON CONFLICT DO NOTHING;
+INSERT INTO patrons (code_acces) VALUES ('BUILDLEAD') ON CONFLICT DO NOTHING;
 
 -- 3. TABLES SOUMISSIONS ET LOCATIONS
 -- ============================================================
