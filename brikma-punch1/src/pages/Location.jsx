@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { printLocation } from '../utils/printDoc'
 
 const TPS_RATE = 0.05
 const TVQ_RATE = 0.09975
@@ -291,9 +292,12 @@ export default function Location(){
             </div>
           </div>
 
-          <div style={{display:'flex',gap:'8px',justifyContent:'flex-end',flexWrap:'wrap'}}>
-            {selected.statut!=='termine'&&<button onClick={()=>changerStatut(selected.id,'termine')} style={{background:'rgba(59,130,196,0.15)',border:'1.5px solid #3b82c4',color:'#3b82c4',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ RETOUR COMPLÉTÉ</button>}
-            {selected.statut!=='annule'&&<button onClick={()=>changerStatut(selected.id,'annule')} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✕ ANNULER</button>}
+          <div style={{display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',marginTop:'4px'}}>
+            <button onClick={()=>printLocation(selected,selectedArticles)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
+            <div style={{display:'flex',gap:'8px'}}>
+              {selected.statut!=='termine'&&<button onClick={()=>changerStatut(selected.id,'termine')} style={{background:'rgba(59,130,196,0.15)',border:'1.5px solid #3b82c4',color:'#3b82c4',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ RETOUR COMPLÉTÉ</button>}
+              {selected.statut!=='annule'&&<button onClick={()=>changerStatut(selected.id,'annule')} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✕ ANNULER</button>}
+            </div>
           </div>
         </>
       )}
