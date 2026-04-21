@@ -56,9 +56,10 @@ export default function PatronDashboard({onLogout}){
   }
 
   async function changerStatut(id,statut){
-    await supabase.from('feuilles_temps').update({statut,note_patron:notePatron,approved_at:statut==='approuve'?new Date().toISOString():null}).eq('id',id)
+    const {error}=await supabase.from('feuilles_temps').update({statut,note_patron:notePatron,approved_at:statut==='approuve'?new Date().toISOString():null}).eq('id',id)
+    if(error){alert('Erreur approbation: '+error.message);return}
+    setSelected(prev=>({...prev,statut,note_patron:notePatron}))
     fetchAll()
-    setSelected(prev=>({...prev,statut}))
   }
 
   async function ajouterEmploye(){
@@ -106,7 +107,7 @@ export default function PatronDashboard({onLogout}){
   const inputS={width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}
   const labelS={fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)',display:'block',marginBottom:'4px'}
 
-  if(loading) return <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontFamily:"'Outfit',sans-serif"}}><style>{css}</style>Chargement...</div>
+  if(loading && view==='dashboard' && feuilles.length===0) return <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontFamily:"'Outfit',sans-serif"}}><style>{css}</style>Chargement...</div>
 
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)',fontFamily:"'Outfit',sans-serif"}}>
