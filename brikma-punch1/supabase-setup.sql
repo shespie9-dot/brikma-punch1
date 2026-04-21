@@ -58,8 +58,12 @@ CREATE TABLE IF NOT EXISTS jours_travail (
   heures_ot numeric DEFAULT 0,
   ot_approuve boolean DEFAULT false,
   ot_raison text,
-  notes text
+  notes text,
+  type_paie text DEFAULT 'hors_decret'
 );
+
+-- Ajouter type_paie si la table jours_travail existe déjà
+ALTER TABLE jours_travail ADD COLUMN IF NOT EXISTS type_paie text DEFAULT 'hors_decret';
 
 -- 2. DONNÉES DE BASE
 -- ============================================================

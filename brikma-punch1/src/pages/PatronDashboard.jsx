@@ -15,7 +15,9 @@ function StatutBadge({statut}){
 }
 
 function TypePaieBadge({type}){
-  return <span style={{background:type==='ccq'?'rgba(230,168,23,0.15)':'rgba(59,130,196,0.1)',color:type==='ccq'?'#e6a817':'#8fa8c8',padding:'2px 8px',borderRadius:'4px',fontSize:'0.7rem',fontWeight:'700',letterSpacing:'1px'}}>{type==='ccq'?'CCQ':'Hors décret'}</span>
+  const cfg={ccq:{bg:'rgba(230,168,23,0.15)',color:'#e6a817',txt:'CCQ'},hors_decret:{bg:'rgba(59,130,196,0.1)',color:'#8fa8c8',txt:'Hors décret'},mixte:{bg:'rgba(160,100,220,0.15)',color:'#b088e8',txt:'CCQ + HD'}}
+  const c=cfg[type]||cfg.hors_decret
+  return <span style={{background:c.bg,color:c.color,padding:'2px 8px',borderRadius:'4px',fontSize:'0.7rem',fontWeight:'700',letterSpacing:'1px'}}>{c.txt}</span>
 }
 
 export default function PatronDashboard({onLogout}){

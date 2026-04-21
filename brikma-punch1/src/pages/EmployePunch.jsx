@@ -33,7 +33,8 @@ export default function EmployePunch({employe,onLogout}){
   const [chantierPrincipal,setChantierPrincipal]=useState('')
   const [jours,setJours]=useState(JOURS.map((j,i)=>({
     jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',
-    statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:''
+    statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',
+    typePaie:employe.type_paie||'hors_decret'
   })))
   const [tauxReg,setTauxReg]=useState(employe.taux_regulier||0)
   const [tauxOT,setTauxOT]=useState(employe.taux_ot||0)
@@ -60,8 +61,15 @@ export default function EmployePunch({employe,onLogout}){
   const joursT=jours.filter(d=>d.statut==='present').length
 
   function calcPaie(){
-    if(typePaie==='ccq') return {reg:totReg*tauxCCQ,ot:totOT*(tauxCCQ*1.5),total:totReg*tauxCCQ+totOT*(tauxCCQ*1.5)+Number(indem)}
-    return {reg:totReg*tauxReg,ot:totOT*tauxOT,total:totReg*tauxReg+totOT*tauxOT+Number(indem)}
+    const totals=jours.reduce((acc,d)=>{
+      if(d.statut!=='present') return acc
+      const reg=getReg(d),ot=getOT(d)
+      const r=d.typePaie==='ccq'
+        ?{reg:reg*tauxCCQ,ot:ot*(tauxCCQ*1.5)}
+        :{reg:reg*tauxReg,ot:ot*tauxOT}
+      return{reg:acc.reg+r.reg,ot:acc.ot+r.ot}
+    },{reg:0,ot:0})
+    return{reg:totals.reg,ot:totals.ot,total:totals.reg+totals.ot+Number(indem)}
   }
   const paie=calcPaie()
 
@@ -71,12 +79,14 @@ export default function EmployePunch({employe,onLogout}){
     try{
       const semaineDu=fmtDateISO(lundi)
       // Insert feuille
+      const typesPaie=[...new Set(jours.filter(d=>d.statut==='present').map(d=>d.typePaie))]
+      const typePaieGlobal=typesPaie.length===1?typesPaie[0]:'mixte'
       const {data:feuille,error:e1}=await supabase.from('feuilles_temps').insert({
         employe_id:employe.id,employe_nom:employe.nom,semaine_du:semaineDu,
         chantier_principal:chantierPrincipal,statut:'soumis',
         total_heures:totHrs,total_reg:totReg,total_ot:totOT,
-        type_paie:typePaie,taux_reg:typePaie==='ccq'?tauxCCQ:tauxReg,
-        taux_ot:typePaie==='ccq'?tauxCCQ*1.5:tauxOT,paie_brute:paie.total
+        type_paie:typePaieGlobal,taux_reg:tauxReg,
+        taux_ot:tauxOT,paie_brute:paie.total
       }).select().single()
       if(e1)throw e1
 
@@ -87,7 +97,8 @@ export default function EmployePunch({employe,onLogout}){
         arrive:d.arrive||null,diner_out:d.dinerOut||null,diner_in:d.dinerIn||null,depart:d.depart||null,
         adresse_chantier:d.adresse,type_travail:d.type,
         heures_reg:getReg(d),heures_ot:getOT(d),
-        ot_approuve:d.otApprouve,ot_raison:d.otRaison,notes:d.notes
+        ot_approuve:d.otApprouve,ot_raison:d.otRaison,notes:d.notes,
+        type_paie:d.typePaie
       }))
       const {error:e2}=await supabase.from('jours_travail').insert(joursData)
       if(e2)throw e2
@@ -104,7 +115,7 @@ export default function EmployePunch({employe,onLogout}){
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.8rem',letterSpacing:'3px',color:'white',marginBottom:'8px'}}>Feuille soumise!</div>
         <div style={{color:'var(--muted)',marginBottom:'8px'}}>Semaine du {lundi.toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
         <div style={{color:'var(--green2)',fontSize:'1.1rem',fontWeight:'600',marginBottom:'24px'}}>{totHrs.toFixed(1)}h travaillées · Paie brute: {paie.total.toFixed(2)} $</div>
-        <button onClick={()=>{setSuccess(false);setJours(JOURS.map((j,i)=>({jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:''})))}} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
+        <button onClick={()=>{setSuccess(false);setJours(JOURS.map((j,i)=>({jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',typePaie:employe.type_paie||'hors_decret'})))}} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
         <button onClick={onLogout} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',cursor:'pointer'}}>Déconnexion</button>
       </div>
     </div>
@@ -170,6 +181,19 @@ export default function EmployePunch({employe,onLogout}){
                     <option value="conge">🌴 Congé</option>
                     <option value="ferie">🏛 Férié</option>
                   </select>
+                  {d.statut==='present' && (
+                    <div style={{display:'flex',gap:'3px'}}>
+                      {[['hors_decret','HD'],['ccq','CCQ']].map(([val,lbl])=>(
+                        <button key={val} onClick={()=>updJour(i,'typePaie',val)} style={{
+                          padding:'3px 9px',borderRadius:'4px',
+                          border:`1.5px solid ${d.typePaie===val?'var(--blue2)':'var(--border)'}`,
+                          background:d.typePaie===val?'rgba(59,130,196,0.25)':'transparent',
+                          color:d.typePaie===val?'var(--blue2)':'var(--muted)',
+                          fontSize:'0.7rem',fontWeight:'700',cursor:'pointer',transition:'all 0.15s'
+                        }}>{lbl}</button>
+                      ))}
+                    </div>
+                  )}
                   {hasOT && <span style={{background:'var(--orange)',color:'white',fontSize:'0.68rem',fontWeight:'700',letterSpacing:'1px',padding:'3px 8px',borderRadius:'4px'}}>OT +{ot.toFixed(1)}h</span>}
                   <div style={{marginLeft:'auto',fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.05rem',letterSpacing:'1px',padding:'3px 10px',borderRadius:'5px',
                     color:hrs===0?'#3a5070':hasOT?'var(--orange)':'var(--green2)',
@@ -244,41 +268,22 @@ export default function EmployePunch({employe,onLogout}){
         <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'10px',padding:'18px',marginBottom:'16px'}}>
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>💵 CALCUL DE PAIE</div>
           
-          {/* TYPE PAIE */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'14px'}}>
-            {[['hors_decret','Hors décret'],['ccq','CCQ – Décret construction']].map(([val,lbl])=>(
-              <button key={val} onClick={()=>setTypePaie(val)}
-                style={{padding:'9px',border:`2px solid ${typePaie===val?'var(--blue2)':'rgba(255,255,255,0.1)'}`,borderRadius:'7px',background:typePaie===val?'rgba(59,130,196,0.2)':'transparent',color:typePaie===val?'var(--blue2)':'#6b7a8d',fontFamily:"'Outfit',sans-serif",fontSize:'0.82rem',fontWeight:'600',cursor:'pointer',transition:'all 0.2s'}}>
-                {lbl}
-              </button>
+          <div style={{fontSize:'0.67rem',color:'#6b7a8d',marginBottom:'10px'}}>💡 Le type CCQ / HD se choisit par jour directement sur chaque journée ci-haut.</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:'12px'}}>
+            {[
+              ['Taux CCQ ($/h)',tauxCCQ,setTauxCCQ,'OT × 1.5 = '+(tauxCCQ*1.5).toFixed(2)+' $/h'],
+              ['Taux rég. HD ($/h)',tauxReg,setTauxReg,null],
+              ['Taux OT HD ($/h)',tauxOT,setTauxOT,null],
+              ['Indemnités ($)',indem,setIndem,null]
+            ].map(([lbl,val,set,hint])=>(
+              <div key={lbl}>
+                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>{lbl}</div>
+                <input type="number" value={val} onChange={e=>set(e.target.value)} placeholder="0.00"
+                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
+                {hint && <div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'3px'}}>{hint}</div>}
+              </div>
             ))}
           </div>
-
-          {typePaie==='ccq' ? (
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
-              <div>
-                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>Taux CCQ ($/h)</div>
-                <input type="number" value={tauxCCQ} onChange={e=>setTauxCCQ(e.target.value)} placeholder="Taux CCQ selon classification"
-                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
-                <div style={{fontSize:'0.7rem',color:'#6b7a8d',marginTop:'4px'}}>OT automatique × 1.5 = {(tauxCCQ*1.5).toFixed(2)} $/h</div>
-              </div>
-              <div>
-                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>Indemnités ($)</div>
-                <input type="number" value={indem} onChange={e=>setIndem(e.target.value)} placeholder="Transport, repas..."
-                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
-              </div>
-            </div>
-          ):(
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'12px'}}>
-              {[['Taux régulier ($/h)',tauxReg,setTauxReg],['Taux OT ($/h)',tauxOT,setTauxOT],['Indemnités ($)',indem,setIndem]].map(([lbl,val,set])=>(
-                <div key={lbl}>
-                  <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>{lbl}</div>
-                  <input type="number" value={val} onChange={e=>set(e.target.value)} placeholder="0.00"
-                    style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
-                </div>
-              ))}
-            </div>
-          )}
 
           <div style={{marginTop:'14px',paddingTop:'12px',borderTop:'1px solid rgba(255,255,255,0.1)',display:'flex',gap:'20px',justifyContent:'flex-end',flexWrap:'wrap'}}>
             {[['Paie régulière',paie.reg.toFixed(2)+' $'],['Paie OT',paie.ot.toFixed(2)+' $'],['Indemnités',Number(indem).toFixed(2)+' $']].map(([lbl,val])=>(
