@@ -20,8 +20,9 @@ function calcHrs(d){
   if(d.dinerOut&&d.dinerIn)tot-=(toMin(d.dinerIn)-toMin(d.dinerOut))
   return Math.max(0,tot/60)
 }
-function getOT(d){return Math.max(0,calcHrs(d)-SEUIL_OT)}
-function getReg(d){return Math.min(calcHrs(d),SEUIL_OT)}
+function rawOT(d){return Math.max(0,calcHrs(d)-SEUIL_OT)}
+function getOT(d){return d.otApprouve?rawOT(d):0}
+function getReg(d){return d.otApprouve?Math.min(calcHrs(d),SEUIL_OT):calcHrs(d)}
 
 function getLundi(){
   const n=new Date();const dow=n.getDay();const diff=n.getDate()-dow+(dow===0?-6:1)
@@ -163,7 +164,7 @@ export default function EmployePunch({employe,onLogout}){
         {/* JOURS */}
         <div style={{display:'flex',flexDirection:'column',gap:'10px',marginBottom:'16px'}}>
           {jours.map((d,i)=>{
-            const hrs=calcHrs(d); const ot=getOT(d); const hasOT=ot>0
+            const hrs=calcHrs(d); const ot=rawOT(d); const hasOT=ot>0
             const dDate=dateJour(i)
             return (
               <div key={i} style={{background:'var(--card)',border:`1.5px solid ${hasOT?'var(--orange)':'var(--border)'}`,borderRadius:'9px',overflow:'hidden'}}>
