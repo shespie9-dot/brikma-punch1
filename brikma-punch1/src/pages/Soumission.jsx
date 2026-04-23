@@ -18,11 +18,13 @@ const labelS = {fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTra
 const cardS = {background:'#1a2a3a',border:'1px solid #2e4060',borderRadius:'9px',padding:'16px',marginBottom:'14px'}
 
 function calcLigne(l){ return Number(l.quantite||0)*Number(l.prix_unitaire||0) }
-function calcTotaux(ls){
+function calcTotaux(ls, fraisService=0){
   const sous_total = ls.reduce((s,l)=>s+calcLigne(l),0)
-  const tps = sous_total*TPS_RATE
-  const tvq = sous_total*TVQ_RATE
-  return {sous_total, tps, tvq, total:sous_total+tps+tvq}
+  const frais_service_montant = sous_total * (Number(fraisService)||0) / 100
+  const base_taxable = sous_total + frais_service_montant
+  const tps = base_taxable*TPS_RATE
+  const tvq = base_taxable*TVQ_RATE
+  return {sous_total, frais_service_montant, base_taxable, tps, tvq, total:base_taxable+tps+tvq}
 }
 function genNo(list){
   const yr = new Date().getFullYear()
@@ -48,6 +50,7 @@ export default function Soumission(){
 
   const [form,setForm]=useState({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
   const [lignes,setLignes]=useState([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
+  const [fraisService,setFraisService]=useState(0)
 
   useEffect(()=>{fetch()},[])
 
@@ -68,6 +71,7 @@ export default function Soumission(){
   function nouvelleForm(){
     setForm({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
     setLignes([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
+    setFraisService(0)
     setMsg('')
     setView('form')
   }
@@ -76,14 +80,14 @@ export default function Soumission(){
   function addLigne(){setLignes(prev=>[...prev,{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])}
   function removeLigne(i){setLignes(prev=>prev.filter((_,idx)=>idx!==i))}
 
-  const totaux = calcTotaux(lignes)
+  const totaux = calcTotaux(lignes, fraisService)
 
   async function sauvegarder(statut){
     if(!form.client_nom.trim()){setMsg('Nom du client requis');return}
     setSaving(true);setMsg('')
     const no_soumission = genNo(list)
-    const{sous_total,tps,tvq,total}=calcTotaux(lignes)
-    const{data:soum,error:e1}=await supabase.from('soumissions').insert({...form,no_soumission,statut,sous_total,tps,tvq,total}).select().single()
+    const{sous_total,frais_service_montant,tps,tvq,total}=calcTotaux(lignes,fraisService)
+    const{data:soum,error:e1}=await supabase.from('soumissions').insert({...form,no_soumission,statut,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).select().single()
     if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
     const ld=lignes.filter(l=>l.description.trim()).map(l=>({soumission_id:soum.id,description:l.description,categorie:l.categorie,unite:l.unite,quantite:Number(l.quantite),prix_unitaire:Number(l.prix_unitaire),sous_total:calcLigne(l)}))
     if(ld.length) await supabase.from('soumission_lignes').insert(ld)
@@ -185,16 +189,55 @@ export default function Soumission(){
         <button onClick={addLigne} style={{background:'rgba(59,130,196,0.08)',border:'1px dashed var(--blue2)',color:'var(--blue2)',padding:'8px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginTop:'8px',width:'100%'}}>+ Ajouter une ligne</button>
       </div>
 
+      {/* FRAIS DE SERVICE */}
+      <div style={{background:'rgba(59,130,196,0.06)',border:'1px solid rgba(59,130,196,0.25)',borderRadius:'9px',padding:'14px 16px',marginBottom:'14px',display:'flex',alignItems:'center',gap:'16px',flexWrap:'wrap'}}>
+        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.85rem',letterSpacing:'2px',color:'var(--blue2)'}}>⚙️ FRAIS DE SERVICE</div>
+        <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+          <label style={{...labelS,marginBottom:0,whiteSpace:'nowrap'}}>% sur sous-total</label>
+          <div style={{position:'relative',display:'flex',alignItems:'center'}}>
+            <input type="number" min="0" max="100" step="0.5" value={fraisService} onChange={e=>setFraisService(e.target.value)}
+              style={{...inputS,width:'90px',padding:'6px 28px 6px 10px',fontSize:'0.9rem'}}/>
+            <span style={{position:'absolute',right:'8px',color:'#6b7a8d',fontSize:'0.85rem',pointerEvents:'none'}}>%</span>
+          </div>
+        </div>
+        {Number(fraisService)>0 && (
+          <div style={{marginLeft:'auto',textAlign:'right'}}>
+            <span style={{fontSize:'0.75rem',color:'#8fa8c8'}}>Montant frais de service : </span>
+            <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'var(--blue2)',marginLeft:'6px'}}>{fmt(totaux.frais_service_montant)} $</span>
+          </div>
+        )}
+      </div>
+
       {/* TOTAUX */}
       <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'14px'}}>
         <div style={{display:'flex',justifyContent:'flex-end'}}>
-          <div style={{minWidth:'280px'}}>
-            {[['Sous-total',fmt(totaux.sous_total)+' $','white'],['TPS (5%)',fmt(totaux.tps)+' $','#8fa8c8'],['TVQ (9.975%)',fmt(totaux.tvq)+' $','#8fa8c8'],['TOTAL',fmt(totaux.total)+' $','var(--yellow)']].map(([lbl,val,clr],idx)=>(
-              <div key={lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderTop:idx===3?'1px solid rgba(255,255,255,0.15)':'none',marginTop:idx===3?'4px':'0'}}>
-                <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>{lbl}</span>
-                <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:idx===3?'1.4rem':'1rem',color:clr}}>{val}</span>
+          <div style={{minWidth:'300px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0'}}>
+              <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>Sous-total travaux</span>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'white'}}>{fmt(totaux.sous_total)} $</span>
+            </div>
+            {Number(fraisService)>0 && (
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0'}}>
+                <span style={{fontSize:'0.82rem',color:'var(--blue2)'}}>Frais de service ({fraisService}%)</span>
+                <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'var(--blue2)'}}>{fmt(totaux.frais_service_montant)} $</span>
               </div>
-            ))}
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderTop:'1px solid rgba(255,255,255,0.1)',marginTop:'2px'}}>
+              <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>Base taxable</span>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'white'}}>{fmt(totaux.base_taxable)} $</span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0'}}>
+              <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>TPS (5%)</span>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'#8fa8c8'}}>{fmt(totaux.tps)} $</span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0'}}>
+              <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>TVQ (9.975%)</span>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:'#8fa8c8'}}>{fmt(totaux.tvq)} $</span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderTop:'1px solid rgba(255,255,255,0.15)',marginTop:'4px'}}>
+              <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>TOTAL</span>
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.4rem',color:'var(--yellow)'}}>{fmt(totaux.total)} $</span>
+            </div>
           </div>
         </div>
       </div>
@@ -255,8 +298,18 @@ export default function Soumission(){
 
             {/* Totaux */}
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:'14px',paddingTop:'10px',borderTop:'1px solid var(--border)'}}>
-              <div style={{minWidth:'260px'}}>
-                {[['Sous-total',fmt(selected.sous_total)+' $'],['TPS (5%)',fmt(selected.tps)+' $'],['TVQ (9.975%)',fmt(selected.tvq)+' $']].map(([lbl,val])=>(
+              <div style={{minWidth:'280px'}}>
+                <div style={{display:'flex',justifyContent:'space-between',padding:'3px 0'}}>
+                  <span style={{fontSize:'0.8rem',color:'#6b7a8d'}}>Sous-total travaux</span>
+                  <span style={{fontSize:'0.9rem',color:'#a8c4e0'}}>{fmt(selected.sous_total)} $</span>
+                </div>
+                {Number(selected.frais_service)>0 && (
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'3px 0'}}>
+                    <span style={{fontSize:'0.8rem',color:'var(--blue2)'}}>Frais de service ({selected.frais_service}%)</span>
+                    <span style={{fontSize:'0.9rem',color:'var(--blue2)'}}>{fmt(selected.frais_service_montant)} $</span>
+                  </div>
+                )}
+                {[['TPS (5%)',fmt(selected.tps)+' $'],['TVQ (9.975%)',fmt(selected.tvq)+' $']].map(([lbl,val])=>(
                   <div key={lbl} style={{display:'flex',justifyContent:'space-between',padding:'3px 0'}}>
                     <span style={{fontSize:'0.8rem',color:'#6b7a8d'}}>{lbl}</span>
                     <span style={{fontSize:'0.9rem',color:'#a8c4e0'}}>{val}</span>

@@ -197,9 +197,10 @@ export function printSoumission(s, lignes = []){
   <div class="totaux-wrap">
     <div class="totaux-table">
       <div class="totaux-row">
-        <span class="totaux-lbl">Sous-total</span>
+        <span class="totaux-lbl">Sous-total travaux</span>
         <span class="totaux-val">${fmt(s.sous_total)} $</span>
       </div>
+      ${Number(s.frais_service)>0 ? `<div class="totaux-row" style="color:#2563a8;"><span class="totaux-lbl" style="color:#2563a8;">Frais de service (${s.frais_service}%)</span><span class="totaux-val" style="color:#2563a8;">${fmt(s.frais_service_montant)} $</span></div>` : ''}
       <div class="totaux-row">
         <span class="totaux-lbl">TPS (5%)</span>
         <span class="totaux-val">${fmt(s.tps)} $</span>
