@@ -194,10 +194,8 @@ export default function Soumission(){
             </div>
             {s.ouvert_le && <span style={{background:'rgba(34,160,96,0.15)',color:'#22a060',padding:'3px 9px',borderRadius:'4px',fontSize:'0.7rem',fontWeight:'700',letterSpacing:'1px',whiteSpace:'nowrap'}}>📬 Vu {new Date(s.ouvert_le).toLocaleDateString('fr-CA')}</span>}
             <StatutBadge statut={s.statut}/>
-            {s.statut==='brouillon' && (
-              <button onClick={e=>editBrouillon(s,e)} title="Modifier le brouillon"
-                style={{background:'rgba(230,168,23,0.12)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'4px 10px',borderRadius:'5px',fontSize:'0.78rem',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap'}}>✏️</button>
-            )}
+            <button onClick={e=>editBrouillon(s,e)} title="Modifier"
+              style={{background:'rgba(230,168,23,0.12)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'4px 10px',borderRadius:'5px',fontSize:'0.78rem',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap'}}>✏️</button>
             <button onClick={e=>deleteSoumission(s.id,e)} title="Supprimer"
               style={{background:'rgba(192,57,43,0.12)',border:'1.5px solid rgba(192,57,43,0.5)',color:'#e57373',padding:'4px 9px',borderRadius:'5px',fontSize:'1rem',lineHeight:1,cursor:'pointer',fontWeight:'700'}}>×</button>
           </div>
@@ -405,7 +403,7 @@ export default function Soumission(){
             <div style={{display:'flex',gap:'8px'}}>
               <button onClick={()=>printSoumission(selected,selectedLignes)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
               <button onClick={ouvrirEmailModal} style={{background:'var(--brick)',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>📧 ENVOYER PAR COURRIEL</button>
-              {selected.statut==='brouillon' && <button onClick={()=>editBrouillon(selected,null)} style={{background:'rgba(230,168,23,0.15)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✏️ MODIFIER</button>}
+              <button onClick={()=>editBrouillon(selected,null)} style={{background:'rgba(230,168,23,0.15)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✏️ MODIFIER</button>
             </div>
             <div style={{display:'flex',gap:'8px'}}>
               {selected.statut!=='acceptee'&&<button onClick={()=>changerStatut(selected.id,'acceptee')} style={{background:'rgba(34,160,96,0.15)',border:'1.5px solid #22a060',color:'#22a060',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ ACCEPTÉE</button>}
