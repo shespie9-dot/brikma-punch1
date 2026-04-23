@@ -1,22 +1,11 @@
-// Supabase Edge Function — envoi de courriels via Resend
-//
-// CONFIGURATION REQUISE dans Supabase Dashboard > Project Settings > Edge Functions > Secrets :
-//   RESEND_API_KEY  → votre clé API Resend (ex: re_xxxxxxxxxxxx)
-//   RESEND_FROM     → adresse expéditeur vérifiée (ex: "Brikma Construction <info@brikma.com>")
-//
-// LIMITATION DOMAINE Resend :
-//   Si vous n'avez pas de domaine vérifié, utilisez : onboarding@resend.dev
-//   (les courriels arrivent uniquement à l'adresse du compte Resend en mode test)
-//   Pour envoyer à n'importe quelle adresse, vérifiez votre domaine sur resend.com/domains
-
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -39,7 +28,7 @@ serve(async (req: Request) => {
       )
     }
 
-    // Si RESEND_FROM n'est pas défini, utilise onboarding@resend.dev (test seulement)
+    // Si RESEND_FROM n'est pas défini, utilise onboarding@resend.dev (test — livraison à l'adresse du compte Resend seulement)
     const from = Deno.env.get('RESEND_FROM') || 'Brikma Construction <onboarding@resend.dev>'
 
     const res = await fetch('https://api.resend.com/emails', {
