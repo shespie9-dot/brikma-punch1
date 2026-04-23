@@ -43,6 +43,9 @@ function StatutBadge({statut}){
   return <span style={{background:c.bg,color:c.cl,padding:'3px 10px',borderRadius:'4px',fontSize:'0.72rem',fontWeight:'700',letterSpacing:'1px'}}>{c.t}</span>
 }
 
+const emptyForm = {client_nom:'',client_tel:'',client_email:'',client_adresse:'',id_type:'Permis de conduire',id_no:'',date_depart:'',date_retour:'',chantier:'',mode_paiement:'Comptant',depot:0}
+const emptyArticle = {article:'',categorie:'Échafaudage',quantite:1,prix_jour:0}
+
 export default function Location(){
   const [list,setList]=useState([])
   const [view,setView]=useState('list')
@@ -51,9 +54,11 @@ export default function Location(){
   const [loading,setLoading]=useState(true)
   const [saving,setSaving]=useState(false)
   const [msg,setMsg]=useState('')
+  const [editingId,setEditingId]=useState(null)
+  const [editingNo,setEditingNo]=useState(null)
 
-  const [form,setForm]=useState({client_nom:'',client_tel:'',client_email:'',client_adresse:'',id_type:'Permis de conduire',id_no:'',date_depart:'',date_retour:'',chantier:'',mode_paiement:'Comptant',depot:0})
-  const [articles,setArticles]=useState([{article:'',categorie:'Échafaudage',quantite:1,prix_jour:0}])
+  const [form,setForm]=useState({...emptyForm})
+  const [articles,setArticles]=useState([{...emptyArticle}])
 
   useEffect(()=>{fetchList()},[])
 
@@ -73,14 +78,48 @@ export default function Location(){
 
   function nouvelleForm(){
     const today=new Date().toISOString().slice(0,10)
-    setForm({client_nom:'',client_tel:'',client_email:'',client_adresse:'',id_type:'Permis de conduire',id_no:'',date_depart:today,date_retour:today,chantier:'',mode_paiement:'Comptant',depot:0})
-    setArticles([{article:'',categorie:'Échafaudage',quantite:1,prix_jour:0}])
+    setEditingId(null)
+    setEditingNo(null)
+    setForm({...emptyForm,date_depart:today,date_retour:today})
+    setArticles([{...emptyArticle}])
     setMsg('')
     setView('form')
   }
 
+  async function ouvrirEdition(loc){
+    setEditingId(loc.id)
+    setEditingNo(loc.no_contrat)
+    setForm({
+      client_nom:loc.client_nom||'',
+      client_tel:loc.client_tel||'',
+      client_email:loc.client_email||'',
+      client_adresse:loc.client_adresse||'',
+      id_type:loc.id_type||'Permis de conduire',
+      id_no:loc.id_no||'',
+      date_depart:loc.date_depart||'',
+      date_retour:loc.date_retour||'',
+      chantier:loc.chantier||'',
+      mode_paiement:loc.mode_paiement||'Comptant',
+      depot:loc.depot||0
+    })
+    const{data}=await supabase.from('location_articles').select('*').eq('location_id',loc.id)
+    setArticles(data?.length
+      ? data.map(a=>({article:a.article,categorie:a.categorie,quantite:a.quantite,prix_jour:a.prix_jour}))
+      : [{...emptyArticle}]
+    )
+    setMsg('')
+    setView('form')
+  }
+
+  async function supprimer(id){
+    if(!window.confirm('Supprimer ce contrat de location? Cette action est irréversible.')) return
+    await supabase.from('locations').delete().eq('id',id)
+    setView('list')
+    fetchList()
+  }
+
   function updArticle(i,k,v){setArticles(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})}
-  function addArticle(){setArticles(prev=>[...prev,{article:'',categorie:'Échafaudage',quantite:1,prix_jour:0}])}
+  function addArticle(){setArticles(prev=>[...prev,{...emptyArticle}])}
   function removeArticle(i){setArticles(prev=>prev.filter((_,idx)=>idx!==i))}
 
   const duree=calcDuree(form.date_depart,form.date_retour)
@@ -90,16 +129,28 @@ export default function Location(){
     if(!form.client_nom.trim()){setMsg('Nom du client requis');return}
     if(!form.date_depart||!form.date_retour){setMsg('Dates requises');return}
     setSaving(true);setMsg('')
-    const no_contrat=genNo(list)
     const{sous_total,tps,tvq,total}=calcTotaux(articles,duree)
-    const{data:loc,error:e1}=await supabase.from('locations').insert({...form,no_contrat,statut:'actif',sous_total,tps,tvq,total,depot:Number(form.depot)}).select().single()
-    if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
-    const ad=articles.filter(a=>a.article.trim()).map(a=>({location_id:loc.id,article:a.article,categorie:a.categorie,quantite:Number(a.quantite),prix_jour:Number(a.prix_jour),sous_total:calcArticle(a,duree)}))
+    const payload={...form,sous_total,tps,tvq,total,depot:Number(form.depot)}
+
+    let locId=editingId
+    if(editingId){
+      const{error:eu}=await supabase.from('locations').update(payload).eq('id',editingId)
+      if(eu){setMsg('Erreur: '+eu.message);setSaving(false);return}
+      await supabase.from('location_articles').delete().eq('location_id',editingId)
+    } else {
+      const no_contrat=genNo(list)
+      const{data:loc,error:e1}=await supabase.from('locations').insert({...payload,no_contrat,statut:'actif'}).select().single()
+      if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
+      locId=loc.id
+    }
+
+    const ad=articles.filter(a=>a.article.trim()).map(a=>({location_id:locId,article:a.article,categorie:a.categorie,quantite:Number(a.quantite),prix_jour:Number(a.prix_jour),sous_total:calcArticle(a,duree)}))
     if(ad.length) await supabase.from('location_articles').insert(ad)
-    setMsg('✅ Contrat sauvegardé!')
+
+    setMsg(editingId?'✅ Contrat mis à jour!':'✅ Contrat sauvegardé!')
     fetchList()
     setSaving(false)
-    setTimeout(()=>{setView('list');setMsg('')},1200)
+    setTimeout(()=>{setView('list');setMsg('');setEditingId(null);setEditingNo(null)},1200)
   }
 
   async function changerStatut(id,statut){
@@ -119,17 +170,31 @@ export default function Location(){
       {!loading&&list.length===0&&<div style={{color:'#6b7a8d',textAlign:'center',padding:'40px'}}>Aucun contrat — créez-en un!</div>}
       <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
         {list.map(l=>(
-          <div key={l.id} onClick={()=>openDetail(l)} style={{background:'var(--card)',border:'1.5px solid var(--border)',borderRadius:'8px',padding:'13px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
-            <div style={{flex:1,minWidth:'180px'}}>
+          <div key={l.id} style={{background:'var(--card)',border:'1.5px solid var(--border)',borderRadius:'8px',padding:'13px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+            <div onClick={()=>openDetail(l)} style={{flex:1,minWidth:'180px',cursor:'pointer'}}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'var(--orange)'}}>{l.no_contrat}</div>
               <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>{l.client_nom}</div>
               <div style={{fontSize:'0.73rem',color:'#6b7a8d'}}>{fmtDate(l.date_depart)} → {fmtDate(l.date_retour)}</div>
             </div>
-            <div style={{textAlign:'right',minWidth:'100px'}}>
+            <div onClick={()=>openDetail(l)} style={{textAlign:'right',minWidth:'100px',cursor:'pointer'}}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',color:'var(--yellow)'}}>{fmt(l.total)} $</div>
               <div style={{fontSize:'0.7rem',color:'#6b7a8d'}}>Dépôt: {fmt(l.depot)} $</div>
             </div>
             <StatutBadge statut={l.statut}/>
+            <div style={{display:'flex',gap:'5px'}}>
+              {l.statut==='actif'&&(
+                <button
+                  onClick={e=>{e.stopPropagation();ouvrirEdition(l)}}
+                  title="Modifier"
+                  style={{background:'rgba(217,119,6,0.15)',border:'1px solid var(--orange)',color:'var(--orange)',padding:'5px 9px',borderRadius:'5px',cursor:'pointer',fontSize:'0.85rem',lineHeight:1}}
+                >✏️</button>
+              )}
+              <button
+                onClick={e=>{e.stopPropagation();supprimer(l.id)}}
+                title="Supprimer"
+                style={{background:'rgba(192,57,43,0.12)',border:'1px solid #c0392b',color:'#e57373',padding:'5px 9px',borderRadius:'5px',cursor:'pointer',fontSize:'0.85rem',lineHeight:1}}
+              >🗑</button>
+            </div>
           </div>
         ))}
       </div>
@@ -139,8 +204,13 @@ export default function Location(){
   /* ── FORM ── */
   if(view==='form') return(
     <div><style>{css}</style>
-      <button onClick={()=>setView('list')} style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}>← Retour</button>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>🏗 NOUVEAU CONTRAT — {genNo(list)}</div>
+      <button
+        onClick={()=>{setView('list');setEditingId(null);setEditingNo(null)}}
+        style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}
+      >← Retour</button>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>
+        🏗 {editingId ? `MODIFIER — ${editingNo}` : `NOUVEAU CONTRAT — ${genNo(list)}`}
+      </div>
 
       {/* CLIENT + ID */}
       <div style={cardS}>
@@ -227,7 +297,9 @@ export default function Location(){
       {msg&&<div style={{padding:'10px 14px',borderRadius:'7px',marginBottom:'12px',background:msg.includes('✅')?'rgba(34,160,96,0.15)':'rgba(192,57,43,0.15)',color:msg.includes('✅')?'#22a060':'#e57373',fontSize:'0.84rem'}}>{msg}</div>}
 
       <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
-        <button onClick={sauvegarder} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 28px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>{saving?'...':'💾 CRÉER LE CONTRAT'}</button>
+        <button onClick={sauvegarder} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 28px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>
+          {saving?'...':(editingId?'✅ ENREGISTRER':'💾 CRÉER LE CONTRAT')}
+        </button>
       </div>
     </div>
   )
@@ -292,8 +364,15 @@ export default function Location(){
             </div>
           </div>
 
+          {/* Actions */}
           <div style={{display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',marginTop:'4px'}}>
-            <button onClick={()=>printLocation(selected,selectedArticles)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
+            <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+              <button onClick={()=>printLocation(selected,selectedArticles)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
+              {selected.statut==='actif'&&(
+                <button onClick={()=>ouvrirEdition(selected)} style={{background:'rgba(217,119,6,0.15)',border:'1.5px solid var(--orange)',color:'var(--orange)',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✏️ MODIFIER</button>
+              )}
+              <button onClick={()=>supprimer(selected.id)} style={{background:'rgba(192,57,43,0.12)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🗑 SUPPRIMER</button>
+            </div>
             <div style={{display:'flex',gap:'8px'}}>
               {selected.statut!=='termine'&&<button onClick={()=>changerStatut(selected.id,'termine')} style={{background:'rgba(59,130,196,0.15)',border:'1.5px solid #3b82c4',color:'#3b82c4',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ RETOUR COMPLÉTÉ</button>}
               {selected.statut!=='annule'&&<button onClick={()=>changerStatut(selected.id,'annule')} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✕ ANNULER</button>}

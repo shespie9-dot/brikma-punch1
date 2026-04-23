@@ -123,7 +123,13 @@ CREATE TABLE IF NOT EXISTS location_articles (
   sous_total NUMERIC(10,2) DEFAULT 0
 );
 
--- 4. DÉSACTIVER RLS (app interne, accès par code seulement)
+-- 4. MIGRATIONS (à appliquer si les tables existent déjà)
+-- ============================================================
+
+-- Frais de service sur les soumissions (taxables)
+ALTER TABLE soumissions ADD COLUMN IF NOT EXISTS frais_service NUMERIC(10,2) DEFAULT 0;
+
+-- 5. DÉSACTIVER RLS (app interne, accès par code seulement)
 -- ============================================================
 
 ALTER TABLE employes DISABLE ROW LEVEL SECURITY;

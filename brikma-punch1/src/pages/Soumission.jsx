@@ -18,11 +18,12 @@ const labelS = {fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTra
 const cardS = {background:'#1a2a3a',border:'1px solid #2e4060',borderRadius:'9px',padding:'16px',marginBottom:'14px'}
 
 function calcLigne(l){ return Number(l.quantite||0)*Number(l.prix_unitaire||0) }
-function calcTotaux(ls){
+function calcTotaux(ls, frais=0){
   const sous_total = ls.reduce((s,l)=>s+calcLigne(l),0)
-  const tps = sous_total*TPS_RATE
-  const tvq = sous_total*TVQ_RATE
-  return {sous_total, tps, tvq, total:sous_total+tps+tvq}
+  const base = sous_total + Number(frais)
+  const tps = base*TPS_RATE
+  const tvq = base*TVQ_RATE
+  return {sous_total, frais_service:Number(frais), tps, tvq, total:base+tps+tvq}
 }
 function genNo(list){
   const yr = new Date().getFullYear()
@@ -45,13 +46,16 @@ export default function Soumission(){
   const [loading,setLoading]=useState(true)
   const [saving,setSaving]=useState(false)
   const [msg,setMsg]=useState('')
+  const [editingId,setEditingId]=useState(null)
+  const [editingNo,setEditingNo]=useState(null)
 
   const [form,setForm]=useState({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
   const [lignes,setLignes]=useState([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
+  const [fraisService,setFraisService]=useState(0)
 
-  useEffect(()=>{fetch()},[])
+  useEffect(()=>{fetchList()},[])
 
-  async function fetch(){
+  async function fetchList(){
     setLoading(true)
     const{data}=await supabase.from('soumissions').select('*').order('created_at',{ascending:false})
     setList(data||[])
@@ -66,37 +70,114 @@ export default function Soumission(){
   }
 
   function nouvelleForm(){
+    setEditingId(null)
+    setEditingNo(null)
+    setFraisService(0)
     setForm({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
     setLignes([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
     setMsg('')
     setView('form')
   }
 
+  async function ouvrirEdition(soum){
+    setEditingId(soum.id)
+    setEditingNo(soum.no_soumission)
+    setFraisService(soum.frais_service||0)
+    setForm({
+      client_nom:soum.client_nom||'',
+      client_tel:soum.client_tel||'',
+      client_email:soum.client_email||'',
+      client_adresse:soum.client_adresse||'',
+      chantier:soum.chantier||'',
+      type_batiment:soum.type_batiment||'',
+      description:soum.description||''
+    })
+    const{data}=await supabase.from('soumission_lignes').select('*').eq('soumission_id',soum.id)
+    setLignes(data?.length
+      ? data.map(l=>({description:l.description,categorie:l.categorie,unite:l.unite,quantite:l.quantite,prix_unitaire:l.prix_unitaire}))
+      : [{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}]
+    )
+    setMsg('')
+    setView('form')
+  }
+
+  async function supprimer(id){
+    if(!window.confirm('Supprimer cette soumission? Cette action est irréversible.')) return
+    await supabase.from('soumissions').delete().eq('id',id)
+    setView('list')
+    fetchList()
+  }
+
   function updLigne(i,k,v){setLignes(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})}
   function addLigne(){setLignes(prev=>[...prev,{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])}
   function removeLigne(i){setLignes(prev=>prev.filter((_,idx)=>idx!==i))}
 
-  const totaux = calcTotaux(lignes)
+  const totaux = calcTotaux(lignes, fraisService)
 
   async function sauvegarder(statut){
     if(!form.client_nom.trim()){setMsg('Nom du client requis');return}
     setSaving(true);setMsg('')
-    const no_soumission = genNo(list)
-    const{sous_total,tps,tvq,total}=calcTotaux(lignes)
-    const{data:soum,error:e1}=await supabase.from('soumissions').insert({...form,no_soumission,statut,sous_total,tps,tvq,total}).select().single()
-    if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
-    const ld=lignes.filter(l=>l.description.trim()).map(l=>({soumission_id:soum.id,description:l.description,categorie:l.categorie,unite:l.unite,quantite:Number(l.quantite),prix_unitaire:Number(l.prix_unitaire),sous_total:calcLigne(l)}))
+    const{sous_total,frais_service,tps,tvq,total}=calcTotaux(lignes,fraisService)
+    const payload={...form,statut,sous_total,frais_service,tps,tvq,total}
+
+    let soumId=editingId
+    if(editingId){
+      const{error:eu}=await supabase.from('soumissions').update(payload).eq('id',editingId)
+      if(eu){setMsg('Erreur: '+eu.message);setSaving(false);return}
+      await supabase.from('soumission_lignes').delete().eq('soumission_id',editingId)
+    } else {
+      const no_soumission=genNo(list)
+      const{data:soum,error:e1}=await supabase.from('soumissions').insert({...payload,no_soumission}).select().single()
+      if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
+      soumId=soum.id
+      if(statut==='envoye'&&form.client_email){
+        envoyerEmailSoumission(form.client_email, no_soumission, total)
+      }
+    }
+
+    const ld=lignes.filter(l=>l.description.trim()).map(l=>({soumission_id:soumId,description:l.description,categorie:l.categorie,unite:l.unite,quantite:Number(l.quantite),prix_unitaire:Number(l.prix_unitaire),sous_total:calcLigne(l)}))
     if(ld.length) await supabase.from('soumission_lignes').insert(ld)
-    setMsg('✅ Soumission sauvegardée!')
-    fetch()
+
+    setMsg(editingId?'✅ Soumission mise à jour!':'✅ Soumission sauvegardée!')
+    fetchList()
     setSaving(false)
-    setTimeout(()=>{setView('list');setMsg('')},1200)
+    setTimeout(()=>{setView('list');setMsg('');setEditingId(null);setEditingNo(null)},1200)
+  }
+
+  async function envoyerEmailSoumission(to, no, total){
+    try{
+      await supabase.functions.invoke('send-email',{
+        body:{
+          to,
+          subject:`Soumission ${no} — Brikma Construction`,
+          html:`<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:24px;background:#f9f9f9;border-radius:8px">
+            <div style="background:#1e3a5f;padding:20px 24px;border-radius:6px 6px 0 0">
+              <h1 style="color:white;margin:0;font-size:22px;letter-spacing:2px">BRIKMA CONSTRUCTION</h1>
+            </div>
+            <div style="background:white;padding:24px;border-radius:0 0 6px 6px">
+              <h2 style="color:#1e3a5f;margin-top:0">Votre soumission ${no}</h2>
+              <p style="color:#444">Bonjour,</p>
+              <p style="color:#444">Nous avons le plaisir de vous faire parvenir votre soumission numéro <strong>${no}</strong>.</p>
+              <div style="background:#f0f4f8;border-left:4px solid #c0623a;padding:16px;margin:20px 0;border-radius:0 6px 6px 0">
+                <div style="font-size:13px;color:#666">Montant total (taxes incluses)</div>
+                <div style="font-size:28px;font-weight:bold;color:#1e3a5f">${Number(total).toFixed(2)} $</div>
+              </div>
+              <p style="color:#444">N'hésitez pas à nous contacter pour toute question.</p>
+              <hr style="border:none;border-top:1px solid #eee;margin:20px 0"/>
+              <p style="color:#999;font-size:12px;margin:0">Brikma Construction</p>
+            </div>
+          </div>`
+        }
+      })
+    }catch(e){
+      console.warn('Envoi courriel échoué:',e)
+    }
   }
 
   async function changerStatut(id,statut){
     await supabase.from('soumissions').update({statut}).eq('id',id)
     setSelected(prev=>({...prev,statut}))
-    fetch()
+    fetchList()
   }
 
   /* ── LIST ── */
@@ -110,17 +191,31 @@ export default function Soumission(){
       {!loading&&list.length===0&&<div style={{color:'#6b7a8d',textAlign:'center',padding:'40px'}}>Aucune soumission — créez-en une!</div>}
       <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
         {list.map(s=>(
-          <div key={s.id} onClick={()=>openDetail(s)} style={{background:'var(--card)',border:'1.5px solid var(--border)',borderRadius:'8px',padding:'13px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
-            <div style={{flex:1,minWidth:'180px'}}>
+          <div key={s.id} style={{background:'var(--card)',border:'1.5px solid var(--border)',borderRadius:'8px',padding:'13px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+            <div onClick={()=>openDetail(s)} style={{flex:1,minWidth:'180px',cursor:'pointer'}}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'var(--blue2)'}}>{s.no_soumission}</div>
               <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>{s.client_nom}</div>
               <div style={{fontSize:'0.73rem',color:'#6b7a8d'}}>{s.chantier||'—'}</div>
             </div>
-            <div style={{textAlign:'right',minWidth:'100px'}}>
+            <div onClick={()=>openDetail(s)} style={{textAlign:'right',minWidth:'100px',cursor:'pointer'}}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',color:'var(--yellow)'}}>{fmt(s.total)} $</div>
               <div style={{fontSize:'0.7rem',color:'#6b7a8d'}}>{new Date(s.created_at).toLocaleDateString('fr-CA')}</div>
             </div>
             <StatutBadge statut={s.statut}/>
+            <div style={{display:'flex',gap:'5px'}}>
+              {s.statut==='brouillon'&&(
+                <button
+                  onClick={e=>{e.stopPropagation();ouvrirEdition(s)}}
+                  title="Modifier"
+                  style={{background:'rgba(59,130,196,0.15)',border:'1px solid #3b82c4',color:'#3b82c4',padding:'5px 9px',borderRadius:'5px',cursor:'pointer',fontSize:'0.85rem',lineHeight:1}}
+                >✏️</button>
+              )}
+              <button
+                onClick={e=>{e.stopPropagation();supprimer(s.id)}}
+                title="Supprimer"
+                style={{background:'rgba(192,57,43,0.12)',border:'1px solid #c0392b',color:'#e57373',padding:'5px 9px',borderRadius:'5px',cursor:'pointer',fontSize:'0.85rem',lineHeight:1}}
+              >🗑</button>
+            </div>
           </div>
         ))}
       </div>
@@ -130,8 +225,13 @@ export default function Soumission(){
   /* ── FORM ── */
   if(view==='form') return(
     <div><style>{css}</style>
-      <button onClick={()=>setView('list')} style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}>← Retour</button>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>📋 NOUVELLE SOUMISSION — {genNo(list)}</div>
+      <button
+        onClick={()=>{setView('list');setEditingId(null);setEditingNo(null)}}
+        style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}
+      >← Retour</button>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>
+        📋 {editingId ? `MODIFIER — ${editingNo}` : `NOUVELLE SOUMISSION — ${genNo(list)}`}
+      </div>
 
       {/* CLIENT */}
       <div style={cardS}>
@@ -185,14 +285,32 @@ export default function Soumission(){
         <button onClick={addLigne} style={{background:'rgba(59,130,196,0.08)',border:'1px dashed var(--blue2)',color:'var(--blue2)',padding:'8px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginTop:'8px',width:'100%'}}>+ Ajouter une ligne</button>
       </div>
 
-      {/* TOTAUX */}
+      {/* TOTAUX + FRAIS DE SERVICE */}
       <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'14px'}}>
-        <div style={{display:'flex',justifyContent:'flex-end'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'20px',flexWrap:'wrap'}}>
+          <div style={{minWidth:'180px'}}>
+            <label style={labelS}>Frais de service ($)</label>
+            <input
+              type="number"
+              value={fraisService}
+              onChange={e=>setFraisService(e.target.value)}
+              placeholder="0.00"
+              min="0"
+              style={{...inputS,maxWidth:'160px'}}
+            />
+            <div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'5px'}}>Optionnel — soumis aux taxes</div>
+          </div>
           <div style={{minWidth:'280px'}}>
-            {[['Sous-total',fmt(totaux.sous_total)+' $','white'],['TPS (5%)',fmt(totaux.tps)+' $','#8fa8c8'],['TVQ (9.975%)',fmt(totaux.tvq)+' $','#8fa8c8'],['TOTAL',fmt(totaux.total)+' $','var(--yellow)']].map(([lbl,val,clr],idx)=>(
-              <div key={lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderTop:idx===3?'1px solid rgba(255,255,255,0.15)':'none',marginTop:idx===3?'4px':'0'}}>
+            {[
+              ['Sous-total', fmt(totaux.sous_total)+' $', 'white', false],
+              ...(Number(fraisService)>0 ? [['Frais de service', fmt(totaux.frais_service)+' $', 'var(--orange)', false]] : []),
+              ['TPS (5%)', fmt(totaux.tps)+' $', '#8fa8c8', false],
+              ['TVQ (9.975%)', fmt(totaux.tvq)+' $', '#8fa8c8', false],
+              ['TOTAL', fmt(totaux.total)+' $', 'var(--yellow)', true],
+            ].map(([lbl,val,clr,isTotal])=>(
+              <div key={lbl} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 0',borderTop:isTotal?'1px solid rgba(255,255,255,0.15)':'none',marginTop:isTotal?'4px':'0'}}>
                 <span style={{fontSize:'0.82rem',color:'#8fa8c8'}}>{lbl}</span>
-                <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:idx===3?'1.4rem':'1rem',color:clr}}>{val}</span>
+                <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:isTotal?'1.4rem':'1rem',color:clr}}>{val}</span>
               </div>
             ))}
           </div>
@@ -202,8 +320,12 @@ export default function Soumission(){
       {msg&&<div style={{padding:'10px 14px',borderRadius:'7px',marginBottom:'12px',background:msg.includes('✅')?'rgba(34,160,96,0.15)':'rgba(192,57,43,0.15)',color:msg.includes('✅')?'#22a060':'#e57373',fontSize:'0.84rem'}}>{msg}</div>}
 
       <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
-        <button onClick={()=>sauvegarder('brouillon')} disabled={saving} style={{background:'transparent',border:'1.5px solid var(--border)',color:'#6b7a8d',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>💾 BROUILLON</button>
-        <button onClick={()=>sauvegarder('envoye')} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>{saving?'...':'📤 SOUMETTRE AU CLIENT'}</button>
+        <button onClick={()=>sauvegarder('brouillon')} disabled={saving} style={{background:'transparent',border:'1.5px solid var(--border)',color:'#6b7a8d',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>
+          💾 BROUILLON
+        </button>
+        <button onClick={()=>sauvegarder('envoye')} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>
+          {saving?'...':(editingId?'✅ ENREGISTRER':'📤 SOUMETTRE AU CLIENT')}
+        </button>
       </div>
     </div>
   )
@@ -256,7 +378,12 @@ export default function Soumission(){
             {/* Totaux */}
             <div style={{display:'flex',justifyContent:'flex-end',marginTop:'14px',paddingTop:'10px',borderTop:'1px solid var(--border)'}}>
               <div style={{minWidth:'260px'}}>
-                {[['Sous-total',fmt(selected.sous_total)+' $'],['TPS (5%)',fmt(selected.tps)+' $'],['TVQ (9.975%)',fmt(selected.tvq)+' $']].map(([lbl,val])=>(
+                {[
+                  ['Sous-total', fmt(selected.sous_total)+' $'],
+                  ...(Number(selected.frais_service)>0?[['Frais de service', fmt(selected.frais_service)+' $']]:[]),
+                  ['TPS (5%)', fmt(selected.tps)+' $'],
+                  ['TVQ (9.975%)', fmt(selected.tvq)+' $'],
+                ].map(([lbl,val])=>(
                   <div key={lbl} style={{display:'flex',justifyContent:'space-between',padding:'3px 0'}}>
                     <span style={{fontSize:'0.8rem',color:'#6b7a8d'}}>{lbl}</span>
                     <span style={{fontSize:'0.9rem',color:'#a8c4e0'}}>{val}</span>
@@ -272,7 +399,13 @@ export default function Soumission(){
 
           {/* Actions */}
           <div style={{display:'flex',gap:'8px',justifyContent:'space-between',flexWrap:'wrap',marginTop:'4px'}}>
-            <button onClick={()=>printSoumission(selected,selectedLignes)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
+            <div style={{display:'flex',gap:'8px',flexWrap:'wrap'}}>
+              <button onClick={()=>printSoumission(selected,selectedLignes)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
+              {selected.statut==='brouillon'&&(
+                <button onClick={()=>ouvrirEdition(selected)} style={{background:'rgba(59,130,196,0.15)',border:'1.5px solid #3b82c4',color:'#3b82c4',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✏️ MODIFIER</button>
+              )}
+              <button onClick={()=>supprimer(selected.id)} style={{background:'rgba(192,57,43,0.12)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🗑 SUPPRIMER</button>
+            </div>
             <div style={{display:'flex',gap:'8px'}}>
               {selected.statut!=='acceptee'&&<button onClick={()=>changerStatut(selected.id,'acceptee')} style={{background:'rgba(34,160,96,0.15)',border:'1.5px solid #22a060',color:'#22a060',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ ACCEPTÉE</button>}
               {selected.statut!=='refusee'&&<button onClick={()=>changerStatut(selected.id,'refusee')} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✕ REFUSÉE</button>}
