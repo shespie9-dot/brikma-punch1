@@ -289,9 +289,9 @@ export default function Soumission(){
       {/* TOTAUX + FRAIS DE SERVICE */}
       <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'20px',flexWrap:'wrap'}}>
-          <div style={{minWidth:'180px'}}>
+          <div style={{minWidth:'210px'}}>
             <label style={labelS}>Frais de service (%)</label>
-            <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:'6px',marginBottom:'7px'}}>
               <input
                 type="number"
                 value={fraisService}
@@ -299,14 +299,28 @@ export default function Soumission(){
                 placeholder="0"
                 min="0"
                 max="100"
-                style={{...inputS,maxWidth:'100px'}}
+                style={{...inputS,maxWidth:'90px'}}
               />
               <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',color:'var(--orange)'}}>%</span>
             </div>
+            <div style={{display:'flex',gap:'5px',flexWrap:'wrap'}}>
+              {[0,5,10,15,20].map(p=>(
+                <button
+                  key={p}
+                  type="button"
+                  onClick={()=>setFraisService(p)}
+                  style={{
+                    padding:'3px 9px',borderRadius:'4px',fontSize:'0.75rem',cursor:'pointer',fontWeight:'600',
+                    border: Number(fraisService)===p ? '1.5px solid var(--orange)' : '1px solid #2e4060',
+                    background: Number(fraisService)===p ? 'rgba(217,119,6,0.2)' : 'transparent',
+                    color: Number(fraisService)===p ? 'var(--orange)' : '#6b7a8d'
+                  }}
+                >{p===0?'Aucun':p+'%'}</button>
+              ))}
+            </div>
             {Number(fraisService)>0&&(
-              <div style={{fontSize:'0.75rem',color:'var(--orange)',marginTop:'5px'}}>= {fmt(totaux.frais_montant)} $ sur le sous-total</div>
+              <div style={{fontSize:'0.75rem',color:'var(--orange)',marginTop:'6px'}}>= {fmt(totaux.frais_montant)} $ sur le sous-total</div>
             )}
-            {!Number(fraisService)&&<div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'5px'}}>Optionnel — soumis aux taxes</div>}
           </div>
           <div style={{minWidth:'280px'}}>
             {[
