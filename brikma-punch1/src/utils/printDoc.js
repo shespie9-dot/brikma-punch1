@@ -113,7 +113,7 @@ function footer(){
 }
 
 // ─────────────────────────────────────────────
-// SOUMISSION
+// SOUMISSION — layout professionnel devis
 // ─────────────────────────────────────────────
 export function printSoumission(s, lignes = []){
   const dateDoc = today()
@@ -122,128 +122,231 @@ export function printSoumission(s, lignes = []){
     return d.toLocaleDateString('fr-CA',{year:'numeric',month:'long',day:'numeric'})
   })()
 
+  const baseTaxable = Number(s.sous_total||0) + Number(s.frais_service_montant||0)
+  const acompte30 = (baseTaxable * 0.30).toFixed(2)
+
   const lignesRows = lignes.length
-    ? lignes.map(l=>`
-        <tr>
-          <td>${l.description||'—'}</td>
-          <td class="muted">${l.categorie}</td>
-          <td class="muted">${l.unite}</td>
-          <td class="right">${Number(l.quantite||0)}</td>
-          <td class="right">${fmt(l.prix_unitaire)} $</td>
-          <td class="right">${fmt(l.sous_total)} $</td>
+    ? lignes.map((l,i)=>`
+        <tr style="background:${i%2===0?'#fff':'#f7f9fc'}">
+          <td style="padding:7px 8px;font-size:10pt;border-bottom:1px solid #e4eaf2;">${l.description||'—'}</td>
+          <td style="padding:7px 8px;font-size:9pt;color:#666;border-bottom:1px solid #e4eaf2;">${l.unite}</td>
+          <td style="padding:7px 8px;font-size:10pt;text-align:right;border-bottom:1px solid #e4eaf2;">${Number(l.quantite||0)}</td>
+          <td style="padding:7px 8px;font-size:10pt;text-align:right;border-bottom:1px solid #e4eaf2;">${fmt(l.prix_unitaire)} $</td>
+          <td style="padding:7px 8px;font-size:10pt;text-align:right;font-weight:600;border-bottom:1px solid #e4eaf2;">${fmt(l.sous_total)} $</td>
         </tr>`).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:#999;padding:14px;">Aucune ligne</td></tr>'
+    : `<tr><td colspan="5" style="text-align:center;color:#999;padding:16px;font-style:italic;">Aucune ligne de travaux</td></tr>`
+
+  const style = `
+    @page { margin: 12mm 16mm; size: A4; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; color: #1a2030; background: white; line-height: 1.45; }
+
+    /* ── HEADER ── */
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 3px solid #1e3a5f; }
+    .logo-circle { width: 72px; height: 72px; border-radius: 50%; background: #1e3a5f; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; }
+    .logo-circle .lc-icon { font-size: 22pt; line-height: 1; }
+    .logo-circle .lc-name { font-size: 7pt; font-weight: 900; letter-spacing: 2px; color: #e6a817; text-transform: uppercase; margin-top: 2px; }
+    .doc-head-right { text-align: right; }
+    .doc-title { font-size: 28pt; font-weight: 900; letter-spacing: 4px; color: #1e3a5f; line-height: 1; }
+    .doc-no { font-size: 11pt; color: #444; margin-top: 4px; }
+    .doc-no span { font-weight: 700; color: #1e3a5f; }
+    .doc-date { font-size: 10pt; color: #666; margin-top: 2px; }
+
+    /* ── PARTIES ── */
+    .parties { display: flex; gap: 16px; margin-bottom: 14px; }
+    .party-box { flex: 1; border: 1px solid #ccd6e0; border-radius: 3px; padding: 10px 12px; font-size: 10pt; line-height: 1.7; }
+    .party-box .party-title { font-size: 7.5pt; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #c0623a; border-bottom: 1px solid #e4eaf2; padding-bottom: 5px; margin-bottom: 8px; }
+    .party-box strong { color: #1e3a5f; font-size: 10.5pt; }
+
+    /* ── INFOS SUPP ── */
+    .infos-bar { background: #f5f8fc; border: 1px solid #dde5f0; border-radius: 3px; padding: 8px 12px; margin-bottom: 10px; font-size: 9pt; color: #555; display: flex; gap: 24px; flex-wrap: wrap; }
+    .infos-bar span { display: flex; align-items: center; gap: 4px; }
+    .infos-bar strong { color: #1e3a5f; }
+
+    /* ── OBJET ── */
+    .objet-line { margin-bottom: 12px; font-size: 10pt; }
+    .objet-line strong { color: #1e3a5f; }
+
+    /* ── TABLE ── */
+    .table-title { font-size: 8pt; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #1e3a5f; margin-bottom: 6px; padding-left: 8px; border-left: 3px solid #c0623a; }
+    table.items { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+    table.items thead tr { background: #1e3a5f; }
+    table.items thead th { padding: 8px 8px; text-align: left; font-size: 8pt; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: white; }
+    table.items thead th.r { text-align: right; }
+
+    /* ── BOTTOM SPLIT ── */
+    .bottom-split { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 16px; }
+    .conditions-box { flex: 1.2; font-size: 9pt; color: #444; line-height: 1.7; }
+    .conditions-box .cond-title { font-size: 9pt; font-weight: 700; color: #1e3a5f; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+    .conditions-box .acompte { display: inline-block; background: #fff3e0; border: 1.5px solid #c0623a; border-radius: 3px; padding: 5px 12px; font-size: 9.5pt; color: #c0623a; font-weight: 700; margin-top: 8px; }
+
+    /* ── TOTAUX BOX ── */
+    .totaux-box { flex: 1; }
+    .totaux-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid #e4eaf2; font-size: 10pt; }
+    .totaux-row .tl { color: #555; }
+    .totaux-row .tv { font-weight: 600; color: #1a2030; text-align: right; }
+    .totaux-row.frais .tl { color: #2563a8; }
+    .totaux-row.frais .tv { color: #2563a8; }
+    .totaux-row.net { background: #1e3a5f; border-radius: 0 0 4px 4px; border-bottom: none; padding: 9px 12px; }
+    .totaux-row.net .tl { color: white; font-weight: 900; font-size: 11pt; letter-spacing: 1px; }
+    .totaux-row.net .tv { color: #e6a817; font-weight: 900; font-size: 13pt; }
+    .totaux-header { background: #2e4a6e; padding: 6px 12px; border-radius: 4px 4px 0 0; font-size: 8pt; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #a8c4e0; }
+
+    /* ── SIGNATURE ── */
+    .sig-section { border: 1.5px dashed #a0b4cc; border-radius: 4px; padding: 14px 16px; margin-bottom: 14px; }
+    .sig-section .sig-instr { font-size: 9pt; color: #666; margin-bottom: 10px; text-align: center; font-style: italic; }
+    .sig-grid { display: flex; gap: 30px; }
+    .sig-col { flex: 1; }
+    .sig-col .sig-label { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #1e3a5f; margin-bottom: 5px; }
+    .sig-col .sig-line { border-bottom: 1.5px solid #555; height: 44px; margin-bottom: 5px; }
+    .sig-col .sig-sub { font-size: 8.5pt; color: #888; }
+
+    /* ── FOOTER ── */
+    .page-footer { border-top: 2px solid #1e3a5f; padding-top: 8px; text-align: center; font-size: 8pt; color: #777; line-height: 1.8; }
+    .page-footer strong { color: #1e3a5f; }
+  `
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <title>Soumission ${s.no_soumission} — Brikma Construction</title>
-  <style>${baseStyle}</style>
+  <style>${style}</style>
 </head>
 <body>
-  ${header()}
 
-  <div class="doc-title-bar">
-    <div>
-      <div class="doc-type">SOUMISSION</div>
-      <div class="doc-date">Émise le ${dateDoc}</div>
+  <!-- HEADER -->
+  <div class="page-header">
+    <div style="display:flex;gap:14px;align-items:center;">
+      <div class="logo-circle">
+        <div class="lc-icon">🏗</div>
+        <div class="lc-name">Brikma</div>
+      </div>
+      <div style="font-size:9.5pt;color:#444;line-height:1.7;">
+        <strong style="font-size:11pt;color:#1e3a5f;">${COMPANY.nom}</strong><br>
+        ${COMPANY.adresse}<br>
+        Tél : ${COMPANY.tel}<br>
+        RBQ : ${COMPANY.rbq}
+      </div>
     </div>
-    <div class="doc-no">${s.no_soumission}</div>
+    <div class="doc-head-right">
+      <div class="doc-title">SOUMISSION</div>
+      <div class="doc-no">Numéro : <span>${s.no_soumission}</span></div>
+      <div class="doc-date">Date d'émission : ${dateDoc}</div>
+      <div class="doc-date">Valide jusqu'au : ${dateFin}</div>
+    </div>
   </div>
 
-  <div class="two-col">
-    <div class="box">
-      <div class="box-title">📋 De</div>
-      <p><strong>${COMPANY.nom}</strong><br>
+  <!-- PARTIES -->
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-title">De — Entrepreneur</div>
+      <strong>${COMPANY.nom}</strong><br>
       ${COMPANY.adresse}<br>
-      ${COMPANY.tel}<br>
-      RBQ : ${COMPANY.rbq}</p>
+      Téléphone : ${COMPANY.tel}<br>
+      RBQ : ${COMPANY.rbq}<br>
+      ${TPS_NO}<br>
+      ${TVQ_NO}
     </div>
-    <div class="box">
-      <div class="box-title">👤 Client</div>
-      <p><strong>${s.client_nom||'—'}</strong><br>
-      ${s.client_tel||''} ${s.client_email?'· '+s.client_email:''}<br>
-      ${s.client_adresse||''}</p>
-    </div>
-    <div class="box">
-      <div class="box-title">📍 Chantier</div>
-      <p>${s.chantier||'—'}<br>
-      ${s.type_batiment?'<em>'+s.type_batiment+'</em>':''}</p>
+    <div class="party-box">
+      <div class="party-title">Client</div>
+      <strong>${s.client_nom||'—'}</strong><br>
+      ${s.client_adresse||''}${s.client_adresse&&s.client_tel?'<br>':''}
+      ${s.client_tel||''}${s.client_tel&&s.client_email?' · ':''}${s.client_email||''}
     </div>
   </div>
 
-  ${s.description?`
-  <div class="box" style="margin-bottom:14px;">
-    <div class="box-title">📝 Description des travaux</div>
-    <p>${s.description}</p>
-  </div>` : ''}
+  <!-- INFOS SUPP -->
+  <div class="infos-bar">
+    <span>📅 <strong>Durée de validité :</strong> 30 jours</span>
+    <span>🔧 <strong>Service après-vente :</strong> Inclus</span>
+    <span>✅ <strong>Garantie travaux :</strong> 1 an</span>
+    ${s.type_batiment?`<span>🏢 <strong>Type :</strong> ${s.type_batiment}</span>`:''}
+  </div>
 
-  <div class="section-title">Détail des travaux et matériaux</div>
-  <table>
+  <!-- OBJET -->
+  ${(s.chantier||s.description)?`
+  <div class="objet-line">
+    ${s.chantier?`<strong>Chantier :</strong> ${s.chantier}<br>`:''}
+    ${s.description?`<strong>Objet :</strong> ${s.description}`:''}
+  </div>`:''}
+
+  <!-- TABLEAU -->
+  <div class="table-title">Désignation des travaux et matériaux</div>
+  <table class="items">
     <thead>
       <tr>
-        <th>Description</th>
-        <th>Catégorie</th>
+        <th style="width:44%">Désignation</th>
         <th>Unité</th>
-        <th class="right">Qté</th>
-        <th class="right">Prix unit.</th>
-        <th class="right">Sous-total</th>
+        <th class="r">Quantité</th>
+        <th class="r">Prix unit. HT</th>
+        <th class="r">Total HT</th>
       </tr>
     </thead>
     <tbody>${lignesRows}</tbody>
   </table>
 
-  <div class="totaux-wrap">
-    <div class="totaux-table">
+  <!-- BOTTOM SPLIT -->
+  <div class="bottom-split">
+    <div class="conditions-box">
+      <div class="cond-title">Conditions de règlement :</div>
+      · Acompte de 30% à la commande<br>
+      · Solde à la livraison, par paiement comptant<br>
+      · Paiement accepté : chèque, virement, comptant<br>
+      · Tout travail supplémentaire fera l'objet d'un avenant<br>
+      · Les prix sont en dollars canadiens, taxes en sus
+      <div class="acompte">Acompte de 30% à la commande : ${acompte30} $</div>
+    </div>
+    <div class="totaux-box">
+      <div class="totaux-header">Récapitulatif</div>
       <div class="totaux-row">
-        <span class="totaux-lbl">Sous-total travaux</span>
-        <span class="totaux-val">${fmt(s.sous_total)} $</span>
+        <span class="tl">Sous-total HT</span>
+        <span class="tv">${fmt(s.sous_total)} $</span>
       </div>
-      ${Number(s.frais_service)>0 ? `<div class="totaux-row" style="color:#2563a8;"><span class="totaux-lbl" style="color:#2563a8;">Frais de service (${s.frais_service}%)</span><span class="totaux-val" style="color:#2563a8;">${fmt(s.frais_service_montant)} $</span></div>` : ''}
+      ${Number(s.frais_service)>0?`
+      <div class="totaux-row frais">
+        <span class="tl">Frais de service (${s.frais_service}%)</span>
+        <span class="tv">${fmt(s.frais_service_montant)} $</span>
+      </div>`:''}
       <div class="totaux-row">
-        <span class="totaux-lbl">TPS (5%)</span>
-        <span class="totaux-val">${fmt(s.tps)} $</span>
+        <span class="tl">TPS (5%)</span>
+        <span class="tv">${fmt(s.tps)} $</span>
       </div>
       <div class="totaux-row">
-        <span class="totaux-lbl">TVQ (9,975%)</span>
-        <span class="totaux-val">${fmt(s.tvq)} $</span>
+        <span class="tl">TVQ (9,975%)</span>
+        <span class="tv">${fmt(s.tvq)} $</span>
       </div>
-      <div class="totaux-row total">
-        <span class="totaux-lbl">TOTAL</span>
-        <span class="totaux-val">${fmt(s.total)} $</span>
+      <div class="totaux-row net">
+        <span class="tl">NET À PAYER</span>
+        <span class="tv">${fmt(s.total)} $</span>
       </div>
     </div>
   </div>
 
-  <div class="conditions">
-    <strong>Conditions de la soumission</strong>
-    · Cette soumission est valide jusqu'au <strong>${dateFin}</strong> (30 jours).<br>
-    · Les prix sont en dollars canadiens, taxes en sus sauf indication contraire.<br>
-    · Tout travail supplémentaire fera l'objet d'une soumission additionnelle.<br>
-    · Un acompte de 30% est requis avant le début des travaux.<br>
-    · Paiement final dû à la livraison des travaux.
-  </div>
-
-  <div class="section-title">Signatures</div>
-  <div class="signatures">
-    <div class="sig-box">
-      <div class="sig-title">Signature du patron — Brikma Construction</div>
-      <div class="sig-line"></div>
-      <div class="sig-name">Nom : ___________________________________ &nbsp;&nbsp; Date : _____________</div>
-    </div>
-    <div class="sig-box">
-      <div class="sig-title">Signature du client — Acceptation de la soumission</div>
-      <div class="sig-line"></div>
-      <div class="sig-name">Nom : ___________________________________ &nbsp;&nbsp; Date : _____________</div>
+  <!-- SIGNATURE -->
+  <div class="sig-section">
+    <div class="sig-instr">Signature du client (précédée de la mention « Bon pour accord »)</div>
+    <div class="sig-grid">
+      <div class="sig-col">
+        <div class="sig-label">Signature du client — Acceptation</div>
+        <div class="sig-line"></div>
+        <div class="sig-sub">Nom : _________________________________ &nbsp; Date : _______________</div>
+      </div>
+      <div class="sig-col">
+        <div class="sig-label">Signature Brikma Construction</div>
+        <div class="sig-line"></div>
+        <div class="sig-sub">Nom : _________________________________ &nbsp; Date : _______________</div>
+      </div>
     </div>
   </div>
 
-  ${footer()}
+  <!-- FOOTER -->
+  <div class="page-footer">
+    <strong>${COMPANY.nom}</strong> · ${COMPANY.adresse} · Tél : ${COMPANY.tel} · RBQ : ${COMPANY.rbq}<br>
+    ${TPS_NO} &nbsp;·&nbsp; ${TVQ_NO}
+  </div>
 
-  <script>
-    window.onload = function(){ window.focus(); window.print(); }
-  </script>
+  <script>window.onload=function(){window.focus();window.print();}</script>
 </body>
 </html>`
 
