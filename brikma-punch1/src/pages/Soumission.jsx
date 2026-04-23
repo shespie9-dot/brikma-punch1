@@ -56,6 +56,8 @@ export default function Soumission(){
   const [form,setForm]=useState({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
   const [lignes,setLignes]=useState([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
   const [fraisService,setFraisService]=useState(0)
+  const [editId,setEditId]=useState(null)
+  const [editNo,setEditNo]=useState('')
 
   useEffect(()=>{fetch()},[])
 
@@ -77,8 +79,28 @@ export default function Soumission(){
     setForm({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
     setLignes([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
     setFraisService(0)
+    setEditId(null); setEditNo('')
     setMsg('')
     setView('form')
+  }
+
+  async function editBrouillon(s, e){
+    if(e) e.stopPropagation()
+    const{data:ls}=await supabase.from('soumission_lignes').select('*').eq('soumission_id',s.id)
+    setForm({client_nom:s.client_nom||'',client_tel:s.client_tel||'',client_email:s.client_email||'',client_adresse:s.client_adresse||'',chantier:s.chantier||'',type_batiment:s.type_batiment||'',description:s.description||''})
+    setLignes(ls&&ls.length?ls.map(l=>({description:l.description,categorie:l.categorie,unite:l.unite,quantite:l.quantite,prix_unitaire:l.prix_unitaire})):[{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
+    setFraisService(s.frais_service||0)
+    setEditId(s.id); setEditNo(s.no_soumission)
+    setMsg('')
+    setView('form')
+  }
+
+  async function deleteSoumission(id, e){
+    if(e) e.stopPropagation()
+    if(!window.confirm('Supprimer cette soumission? Cette action est irréversible.')) return
+    await supabase.from('soumission_lignes').delete().eq('soumission_id',id)
+    await supabase.from('soumissions').delete().eq('id',id)
+    fetch()
   }
 
   function updLigne(i,k,v){setLignes(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})}
@@ -90,16 +112,25 @@ export default function Soumission(){
   async function sauvegarder(statut){
     if(!form.client_nom.trim()){setMsg('Nom du client requis');return}
     setSaving(true);setMsg('')
-    const no_soumission = genNo(list)
     const{sous_total,frais_service_montant,tps,tvq,total}=calcTotaux(lignes,fraisService)
-    const{data:soum,error:e1}=await supabase.from('soumissions').insert({...form,no_soumission,statut,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).select().single()
-    if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
-    const ld=lignes.filter(l=>l.description.trim()).map(l=>({soumission_id:soum.id,description:l.description,categorie:l.categorie,unite:l.unite,quantite:Number(l.quantite),prix_unitaire:Number(l.prix_unitaire),sous_total:calcLigne(l)}))
+    let soumId
+    if(editId){
+      const{error:e1}=await supabase.from('soumissions').update({...form,statut,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).eq('id',editId)
+      if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
+      await supabase.from('soumission_lignes').delete().eq('soumission_id',editId)
+      soumId=editId
+    } else {
+      const no_soumission = genNo(list)
+      const{data:soum,error:e1}=await supabase.from('soumissions').insert({...form,no_soumission,statut,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).select().single()
+      if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
+      soumId=soum.id
+    }
+    const ld=lignes.filter(l=>l.description.trim()).map(l=>({soumission_id:soumId,description:l.description,categorie:l.categorie,unite:l.unite,quantite:Number(l.quantite),prix_unitaire:Number(l.prix_unitaire),sous_total:calcLigne(l)}))
     if(ld.length) await supabase.from('soumission_lignes').insert(ld)
     setMsg('✅ Soumission sauvegardée!')
     fetch()
     setSaving(false)
-    setTimeout(()=>{setView('list');setMsg('')},1200)
+    setTimeout(()=>{setView('list');setMsg('');setEditId(null);setEditNo('')},1200)
   }
 
   async function changerStatut(id,statut){
@@ -163,6 +194,12 @@ export default function Soumission(){
             </div>
             {s.ouvert_le && <span style={{background:'rgba(34,160,96,0.15)',color:'#22a060',padding:'3px 9px',borderRadius:'4px',fontSize:'0.7rem',fontWeight:'700',letterSpacing:'1px',whiteSpace:'nowrap'}}>📬 Vu {new Date(s.ouvert_le).toLocaleDateString('fr-CA')}</span>}
             <StatutBadge statut={s.statut}/>
+            {s.statut==='brouillon' && (
+              <button onClick={e=>editBrouillon(s,e)} title="Modifier le brouillon"
+                style={{background:'rgba(230,168,23,0.12)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'4px 10px',borderRadius:'5px',fontSize:'0.78rem',fontWeight:'700',cursor:'pointer',whiteSpace:'nowrap'}}>✏️</button>
+            )}
+            <button onClick={e=>deleteSoumission(s.id,e)} title="Supprimer"
+              style={{background:'rgba(192,57,43,0.12)',border:'1.5px solid rgba(192,57,43,0.5)',color:'#e57373',padding:'4px 9px',borderRadius:'5px',fontSize:'1rem',lineHeight:1,cursor:'pointer',fontWeight:'700'}}>×</button>
           </div>
         ))}
       </div>
@@ -173,7 +210,7 @@ export default function Soumission(){
   if(view==='form') return(
     <div><style>{css}</style>
       <button onClick={()=>setView('list')} style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}>← Retour</button>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>📋 NOUVELLE SOUMISSION — {genNo(list)}</div>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>{editId?`✏️ MODIFIER BROUILLON — ${editNo}`:`📋 NOUVELLE SOUMISSION — ${genNo(list)}`}</div>
 
       {/* CLIENT */}
       <div style={cardS}>
@@ -368,10 +405,12 @@ export default function Soumission(){
             <div style={{display:'flex',gap:'8px'}}>
               <button onClick={()=>printSoumission(selected,selectedLignes)} style={{background:'#1e3a5f',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🖨 IMPRIMER / PDF</button>
               <button onClick={ouvrirEmailModal} style={{background:'var(--brick)',border:'none',color:'white',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>📧 ENVOYER PAR COURRIEL</button>
+              {selected.statut==='brouillon' && <button onClick={()=>editBrouillon(selected,null)} style={{background:'rgba(230,168,23,0.15)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✏️ MODIFIER</button>}
             </div>
             <div style={{display:'flex',gap:'8px'}}>
               {selected.statut!=='acceptee'&&<button onClick={()=>changerStatut(selected.id,'acceptee')} style={{background:'rgba(34,160,96,0.15)',border:'1.5px solid #22a060',color:'#22a060',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✓ ACCEPTÉE</button>}
               {selected.statut!=='refusee'&&<button onClick={()=>changerStatut(selected.id,'refusee')} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>✕ REFUSÉE</button>}
+              <button onClick={()=>deleteSoumission(selected.id,null)} style={{background:'rgba(192,57,43,0.15)',border:'1.5px solid #c0392b',color:'#e57373',padding:'9px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>🗑 SUPPRIMER</button>
             </div>
           </div>
         </>
