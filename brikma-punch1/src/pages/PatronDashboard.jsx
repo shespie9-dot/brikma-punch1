@@ -8,7 +8,21 @@ const css = `
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:'Outfit',sans-serif;}
   input,select,textarea{font-family:'Outfit',sans-serif;}
+  input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:0.4;}
 `
+
+const SEUIL_OT = 8
+const TYPES_TRAVAIL = ['Normal','Excavation','Maçonnerie','Charpente','Toiture','Finition','Électricité','Plomberie','Peinture','Nettoyage','Formation','Autre']
+
+function toMin(t){if(!t)return 0;const[h,m]=t.split(':').map(Number);return h*60+m}
+function calcHrsJour(j){
+  if(j.statut!=='present'||!j.arrive||!j.depart)return 0
+  let tot=toMin(j.depart)-toMin(j.arrive)
+  if(j.diner_out&&j.diner_in)tot-=(toMin(j.diner_in)-toMin(j.diner_out))
+  return Math.max(0,tot/60)
+}
+function getRegJour(j){const h=calcHrsJour(j);return j.ot_approuve?Math.min(h,SEUIL_OT):h}
+function getOTJour(j){return j.ot_approuve?Math.max(0,calcHrsJour(j)-SEUIL_OT):0}
 
 function StatutBadge({statut}){
   const cfg={soumis:{bg:'rgba(59,130,196,0.15)',color:'#3b82c4',txt:'Soumis'},approuve:{bg:'rgba(34,160,96,0.15)',color:'#22a060',txt:'Approuvé'},refuse:{bg:'rgba(192,57,43,0.15)',color:'#e57373',txt:'Refusé'}}
@@ -34,6 +48,13 @@ export default function PatronDashboard({onLogout}){
   const [filtreStatut,setFiltreStatut]=useState('')
   const [notePatron,setNotePatron]=useState('')
 
+  // Edit feuille
+  const [editMode,setEditMode]=useState(false)
+  const [editData,setEditData]=useState({})
+  const [editJours,setEditJours]=useState([])
+  const [editSaving,setEditSaving]=useState(false)
+  const [editMsg,setEditMsg]=useState('')
+
   // Nouvel employé
   const [newEmp,setNewEmp]=useState({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0})
   const [empLoading,setEmpLoading]=useState(false)
@@ -52,9 +73,98 @@ export default function PatronDashboard({onLogout}){
 
   async function openDetail(f){
     setSelected(f); setNotePatron(f.note_patron||'')
+    setEditMode(false); setEditMsg('')
     const {data}=await supabase.from('jours_travail').select('*').eq('feuille_id',f.id).order('jour_date')
     setJours(data||[])
     setView('detail')
+  }
+
+  function startEdit(){
+    setEditData({
+      chantier_principal: selected.chantier_principal||'',
+      taux_reg: selected.taux_reg||0,
+      taux_ot: selected.taux_ot||0,
+      taux_ccq: selected.taux_ccq||0,
+    })
+    setEditJours(jours.map(j=>({...j,
+      arrive: j.arrive||'',
+      diner_out: j.diner_out||'',
+      diner_in: j.diner_in||'',
+      depart: j.depart||'',
+    })))
+    setEditMsg('')
+    setEditMode(true)
+  }
+
+  function updEditJour(i,k,v){
+    setEditJours(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})
+  }
+
+  async function saveEdit(){
+    setEditSaving(true); setEditMsg('')
+    try {
+      // Recalculer les totaux
+      const totHrs = editJours.reduce((s,j)=>s+calcHrsJour(j),0)
+      const totReg = editJours.reduce((s,j)=>s+getRegJour(j),0)
+      const totOT  = editJours.reduce((s,j)=>s+getOTJour(j),0)
+
+      const typesPaie = [...new Set(editJours.filter(j=>j.statut==='present').map(j=>j.type_paie))]
+      const typePaieGlobal = typesPaie.length===1?typesPaie[0]:'mixte'
+
+      // Recalculer paie brute
+      const paieBrute = editJours.reduce((acc,j)=>{
+        if(j.statut!=='present') return acc
+        const reg=getRegJour(j), ot=getOTJour(j)
+        if(j.type_paie==='ccq'){
+          return acc+reg*Number(editData.taux_ccq||0)+ot*(Number(editData.taux_ccq||0)*1.5)
+        }
+        return acc+reg*Number(editData.taux_reg||0)+ot*Number(editData.taux_ot||0)
+      },0)
+
+      // Update feuille
+      const {error:e1}=await supabase.from('feuilles_temps').update({
+        chantier_principal: editData.chantier_principal,
+        taux_reg: Number(editData.taux_reg)||0,
+        taux_ot: Number(editData.taux_ot)||0,
+        total_heures: totHrs,
+        total_reg: totReg,
+        total_ot: totOT,
+        type_paie: typePaieGlobal,
+        paie_brute: paieBrute,
+      }).eq('id',selected.id)
+      if(e1) throw e1
+
+      // Update chaque jour
+      for(const j of editJours){
+        const reg=getRegJour(j), ot=getOTJour(j)
+        await supabase.from('jours_travail').update({
+          statut: j.statut,
+          arrive: j.arrive||null,
+          diner_out: j.diner_out||null,
+          diner_in: j.diner_in||null,
+          depart: j.depart||null,
+          adresse_chantier: j.adresse_chantier||'',
+          type_travail: j.type_travail||'Normal',
+          heures_reg: reg,
+          heures_ot: ot,
+          ot_approuve: j.ot_approuve||false,
+          ot_raison: j.ot_raison||'',
+          notes: j.notes||'',
+          type_paie: j.type_paie||'hors_decret',
+        }).eq('id',j.id)
+      }
+
+      setEditMsg('✅ Feuille mise à jour!')
+      // Refresh
+      const {data:f2}=await supabase.from('feuilles_temps').select('*').eq('id',selected.id).single()
+      const {data:j2}=await supabase.from('jours_travail').select('*').eq('feuille_id',selected.id).order('jour_date')
+      setSelected(f2); setJours(j2||[])
+      fetchAll()
+      setEditMode(false)
+    } catch(e){
+      setEditMsg('Erreur: '+e.message)
+    }
+    setEditSaving(false)
   }
 
   async function changerStatut(id,statut){
@@ -198,7 +308,11 @@ export default function PatronDashboard({onLogout}){
 
         {/* ── DÉTAIL FEUILLE ── */}
         {view==='detail' && selected && <>
-          <button onClick={()=>setView('dashboard')} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}>← Retour</button>
+          <div style={{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px'}}>
+            <button onClick={()=>{setView('dashboard');setEditMode(false)}} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem'}}>← Retour</button>
+            {!editMode && <button onClick={startEdit} style={{background:'rgba(230,168,23,0.15)',border:'1.5px solid var(--yellow)',color:'var(--yellow)',padding:'7px 18px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',fontWeight:'600'}}>✏️ MODIFIER</button>}
+            {editMode && <button onClick={()=>setEditMode(false)} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem'}}>✕ Annuler</button>}
+          </div>
 
           {/* INFO */}
           <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'14px'}}>
@@ -211,7 +325,7 @@ export default function PatronDashboard({onLogout}){
               <StatutBadge statut={selected.statut}/>
             </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'10px'}}>
-              {[['Total heures',selected.total_heures+'h','var(--blue2)'],['Overtime',selected.total_ot+'h','var(--orange)'],['Taux rég.',selected.taux_reg+' $/h','#a8c4e0'],['Paie brute',selected.paie_brute?.toFixed(2)+' $','var(--yellow)']].map(([lbl,val,clr])=>(
+              {[['Total heures',(editMode?editJours.reduce((s,j)=>s+calcHrsJour(j),0):selected.total_heures).toFixed?.(1)+'h'||'—','var(--blue2)'],['Overtime',(editMode?editJours.reduce((s,j)=>s+getOTJour(j),0):selected.total_ot).toFixed?.(1)+'h'||'—','var(--orange)'],['Taux rég.',(editMode?editData.taux_reg:selected.taux_reg)+' $/h','#a8c4e0'],['Paie brute',(selected.paie_brute||0).toFixed(2)+' $','var(--yellow)']].map(([lbl,val,clr])=>(
                 <div key={lbl} style={{background:'#0f1923',borderRadius:'7px',padding:'11px',textAlign:'center'}}>
                   <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',color:clr}}>{val}</div>
                   <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)',marginTop:'2px'}}>{lbl}</div>
@@ -220,38 +334,147 @@ export default function PatronDashboard({onLogout}){
             </div>
           </div>
 
-          {/* JOURS */}
-          <div style={{display:'flex',flexDirection:'column',gap:'7px',marginBottom:'14px'}}>
-            {jours.map(j=>(
-              <div key={j.id} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'7px',padding:'11px 14px'}}>
-                <div style={{display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
-                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'1px',color:'#a8c4e0',minWidth:'75px'}}>{j.jour_nom}</div>
-                  <div style={{fontSize:'0.73rem',color:'var(--muted)',minWidth:'60px'}}>{j.jour_date}</div>
-                  <span style={{fontSize:'0.75rem',color:j.statut==='present'?'var(--green2)':j.statut==='absent'?'var(--red)':'var(--yellow)'}}>{j.statut==='present'?'✅':j.statut==='absent'?'❌':'🌴'} {j.statut}</span>
-                  {j.statut==='present' && <>
-                    <span style={{fontSize:'0.78rem',color:'var(--muted)'}}>{j.arrive} → {j.depart}</span>
-                    <span style={{fontSize:'0.78rem',color:'var(--blue2)',fontWeight:'600'}}>{(j.heures_reg+j.heures_ot).toFixed(1)}h</span>
-                    {j.heures_ot>0 && <span style={{background:'rgba(217,119,6,0.15)',color:'var(--orange)',padding:'2px 7px',borderRadius:'4px',fontSize:'0.72rem',fontWeight:'700'}}>OT {j.heures_ot.toFixed(1)}h {j.ot_approuve?'✅':''}</span>}
-                    <span style={{fontSize:'0.75rem',color:'var(--muted)',marginLeft:'auto'}}>📍 {j.adresse_chantier||'—'}</span>
-                  </>}
+          {/* MODE LECTURE */}
+          {!editMode && <>
+            <div style={{display:'flex',flexDirection:'column',gap:'7px',marginBottom:'14px'}}>
+              {jours.map(j=>(
+                <div key={j.id} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'7px',padding:'11px 14px'}}>
+                  <div style={{display:'flex',gap:'10px',alignItems:'center',flexWrap:'wrap'}}>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'1px',color:'#a8c4e0',minWidth:'75px'}}>{j.jour_nom}</div>
+                    <div style={{fontSize:'0.73rem',color:'var(--muted)',minWidth:'60px'}}>{j.jour_date}</div>
+                    <span style={{fontSize:'0.75rem',color:j.statut==='present'?'var(--green2)':j.statut==='absent'?'var(--red)':'var(--yellow)'}}>{j.statut==='present'?'✅':j.statut==='absent'?'❌':'🌴'} {j.statut}</span>
+                    {j.statut==='present' && <>
+                      <span style={{fontSize:'0.78rem',color:'var(--muted)'}}>{j.arrive} → {j.depart}</span>
+                      <span style={{fontSize:'0.78rem',color:'var(--blue2)',fontWeight:'600'}}>{(j.heures_reg+j.heures_ot).toFixed(1)}h</span>
+                      {j.heures_ot>0 && <span style={{background:'rgba(217,119,6,0.15)',color:'var(--orange)',padding:'2px 7px',borderRadius:'4px',fontSize:'0.72rem',fontWeight:'700'}}>OT {j.heures_ot.toFixed(1)}h {j.ot_approuve?'✅':''}</span>}
+                      <span style={{fontSize:'0.75rem',color:'var(--muted)',marginLeft:'auto'}}>📍 {j.adresse_chantier||'—'}</span>
+                    </>}
+                  </div>
+                  {j.ot_raison && <div style={{fontSize:'0.75rem',color:'var(--orange)',marginTop:'6px',paddingLeft:'4px'}}>⚡ {j.ot_raison}</div>}
+                  {j.notes && <div style={{fontSize:'0.75rem',color:'var(--muted)',marginTop:'4px',paddingLeft:'4px'}}>{j.notes}</div>}
                 </div>
-                {j.ot_raison && <div style={{fontSize:'0.75rem',color:'var(--orange)',marginTop:'6px',paddingLeft:'4px'}}>⚡ {j.ot_raison}</div>}
-                {j.notes && <div style={{fontSize:'0.75rem',color:'var(--muted)',marginTop:'4px',paddingLeft:'4px'}}>{j.notes}</div>}
-              </div>
-            ))}
-          </div>
-
-          {/* APPROBATION */}
-          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px'}}>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'12px'}}>✍️ APPROBATION</div>
-            <label style={labelS}>Note au superviseur / employé</label>
-            <textarea value={notePatron} onChange={e=>setNotePatron(e.target.value)} placeholder="Commentaires, corrections demandées..."
-              style={{...inputS,minHeight:'70px',resize:'vertical',marginBottom:'14px'}}/>
-            <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
-              <button onClick={()=>changerStatut(selected.id,'refuse')} style={{background:'rgba(192,57,43,0.2)',border:'1.5px solid var(--red)',color:'#e57373',padding:'10px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>✕ REFUSER</button>
-              <button onClick={()=>changerStatut(selected.id,'approuve')} style={{background:'rgba(34,160,96,0.2)',border:'1.5px solid var(--green2)',color:'var(--green2)',padding:'10px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>✓ APPROUVER</button>
+              ))}
             </div>
-          </div>
+
+            <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px'}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'12px'}}>✍️ APPROBATION</div>
+              <label style={labelS}>Note au superviseur / employé</label>
+              <textarea value={notePatron} onChange={e=>setNotePatron(e.target.value)} placeholder="Commentaires, corrections demandées..."
+                style={{...inputS,minHeight:'70px',resize:'vertical',marginBottom:'14px'}}/>
+              <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
+                <button onClick={()=>changerStatut(selected.id,'refuse')} style={{background:'rgba(192,57,43,0.2)',border:'1.5px solid var(--red)',color:'#e57373',padding:'10px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>✕ REFUSER</button>
+                <button onClick={()=>changerStatut(selected.id,'approuve')} style={{background:'rgba(34,160,96,0.2)',border:'1.5px solid var(--green2)',color:'var(--green2)',padding:'10px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>✓ APPROUVER</button>
+              </div>
+            </div>
+          </>}
+
+          {/* MODE ÉDITION */}
+          {editMode && <>
+            {/* Chantier + taux */}
+            <div style={{background:'var(--card)',border:'1.5px solid var(--yellow)',borderRadius:'9px',padding:'16px',marginBottom:'12px'}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',color:'var(--yellow)',marginBottom:'12px'}}>✏️ MODIFIER LA FEUILLE</div>
+              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:'10px'}}>
+                <div>
+                  <label style={labelS}>Chantier principal</label>
+                  <input value={editData.chantier_principal} onChange={e=>setEditData({...editData,chantier_principal:e.target.value})} style={inputS}/>
+                </div>
+                <div>
+                  <label style={labelS}>Taux rég. ($/h)</label>
+                  <input type="number" value={editData.taux_reg} onChange={e=>setEditData({...editData,taux_reg:e.target.value})} style={inputS}/>
+                </div>
+                <div>
+                  <label style={labelS}>Taux OT ($/h)</label>
+                  <input type="number" value={editData.taux_ot} onChange={e=>setEditData({...editData,taux_ot:e.target.value})} style={inputS}/>
+                </div>
+                <div>
+                  <label style={labelS}>Taux CCQ ($/h)</label>
+                  <input type="number" value={editData.taux_ccq||0} onChange={e=>setEditData({...editData,taux_ccq:e.target.value})} style={inputS}/>
+                </div>
+              </div>
+            </div>
+
+            {/* Jours éditables */}
+            <div style={{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'12px'}}>
+              {editJours.map((j,i)=>{
+                const hrs=calcHrsJour(j); const ot=getOTJour(j)
+                return(
+                  <div key={j.id} style={{background:'var(--card)',border:`1.5px solid ${ot>0?'var(--orange)':'var(--border)'}`,borderRadius:'8px',overflow:'hidden'}}>
+                    {/* Entête jour */}
+                    <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'10px 14px',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
+                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'1.5px',color:'#a8c4e0',minWidth:'75px'}}>{j.jour_nom}</div>
+                      <div style={{fontSize:'0.72rem',color:'var(--muted)'}}>{j.jour_date}</div>
+                      <select value={j.statut} onChange={e=>updEditJour(i,'statut',e.target.value)}
+                        style={{padding:'4px 8px',borderRadius:'5px',border:'1.5px solid',fontSize:'0.78rem',fontWeight:'600',cursor:'pointer',outline:'none',background:'#0f1923',
+                          borderColor:j.statut==='present'?'var(--green2)':j.statut==='absent'?'var(--red)':'var(--yellow)',
+                          color:j.statut==='present'?'var(--green2)':j.statut==='absent'?'var(--red)':'var(--yellow)'}}>
+                        <option value="present">✅ Présent</option>
+                        <option value="absent">❌ Absent</option>
+                        <option value="conge">🌴 Congé</option>
+                        <option value="ferie">🏛 Férié</option>
+                      </select>
+                      {j.statut==='present' && (
+                        <div style={{display:'flex',gap:'4px'}}>
+                          {[['hors_decret','HD'],['ccq','CCQ']].map(([val,lbl])=>(
+                            <button key={val} onClick={()=>updEditJour(i,'type_paie',val)} style={{padding:'3px 8px',borderRadius:'4px',border:`1.5px solid ${j.type_paie===val?'var(--blue2)':'var(--border)'}`,background:j.type_paie===val?'rgba(59,130,196,0.25)':'transparent',color:j.type_paie===val?'var(--blue2)':'var(--muted)',fontSize:'0.7rem',fontWeight:'700',cursor:'pointer'}}>{lbl}</button>
+                          ))}
+                        </div>
+                      )}
+                      {ot>0 && <span style={{background:'var(--orange)',color:'white',fontSize:'0.68rem',fontWeight:'700',padding:'2px 7px',borderRadius:'4px'}}>OT +{ot.toFixed(1)}h</span>}
+                      <div style={{marginLeft:'auto',fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',color:hrs===0?'#3a5070':ot>0?'var(--orange)':'var(--green2)'}}>{hrs===0?'—':hrs.toFixed(1)+'h'}</div>
+                    </div>
+
+                    {/* Corps jour */}
+                    {j.statut==='present' && (
+                      <div style={{padding:'12px 14px'}}>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr 2fr 1fr',gap:'8px',marginBottom:'8px'}}>
+                          {[['Arrivée','arrive'],['Dîner sortie','diner_out'],['Dîner retour','diner_in'],['Départ','depart']].map(([lbl,key])=>(
+                            <div key={key}>
+                              <div style={{fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)',marginBottom:'3px'}}>{lbl}</div>
+                              <input type="time" value={j[key]||''} onChange={e=>updEditJour(i,key,e.target.value)}
+                                style={{width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'5px',padding:'6px 7px',fontSize:'0.85rem',outline:'none'}}/>
+                            </div>
+                          ))}
+                          <div>
+                            <div style={{fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)',marginBottom:'3px'}}>📍 Adresse</div>
+                            <input value={j.adresse_chantier||''} onChange={e=>updEditJour(i,'adresse_chantier',e.target.value)}
+                              style={{width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'5px',padding:'6px 7px',fontSize:'0.82rem',outline:'none'}}/>
+                          </div>
+                          <div>
+                            <div style={{fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)',marginBottom:'3px'}}>Type</div>
+                            <select value={j.type_travail||'Normal'} onChange={e=>updEditJour(i,'type_travail',e.target.value)}
+                              style={{width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'5px',padding:'6px 7px',fontSize:'0.82rem',outline:'none'}}>
+                              {TYPES_TRAVAIL.map(t=><option key={t}>{t}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {ot>0 && (
+                          <div style={{display:'flex',gap:'10px',alignItems:'center',background:'rgba(217,119,6,0.08)',border:'1px solid rgba(217,119,6,0.3)',borderRadius:'6px',padding:'8px 12px'}}>
+                            <label style={{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',fontSize:'0.82rem',color:'var(--orange)',fontWeight:'600',whiteSpace:'nowrap'}}>
+                              <input type="checkbox" checked={j.ot_approuve||false} onChange={e=>updEditJour(i,'ot_approuve',e.target.checked)} style={{accentColor:'var(--orange)'}}/>
+                              OT approuvé
+                            </label>
+                            <input value={j.ot_raison||''} onChange={e=>updEditJour(i,'ot_raison',e.target.value)} placeholder="Raison OT..."
+                              style={{flex:1,background:'#0f1923',border:'1px solid rgba(217,119,6,0.3)',color:'white',borderRadius:'5px',padding:'5px 8px',fontSize:'0.82rem',outline:'none'}}/>
+                          </div>
+                        )}
+                        <input value={j.notes||''} onChange={e=>updEditJour(i,'notes',e.target.value)} placeholder="Notes..."
+                          style={{width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'5px',padding:'6px 8px',fontSize:'0.82rem',outline:'none',marginTop:'6px'}}/>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {editMsg && <div style={{padding:'10px 14px',borderRadius:'7px',marginBottom:'12px',background:editMsg.includes('✅')?'rgba(34,160,96,0.15)':'rgba(192,57,43,0.15)',color:editMsg.includes('✅')?'var(--green2)':'#e57373',fontSize:'0.84rem'}}>{editMsg}</div>}
+
+            <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditMode(false)} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>ANNULER</button>
+              <button onClick={saveEdit} disabled={editSaving} style={{background:editSaving?'#3a5070':'var(--yellow)',border:'none',color:editSaving?'white':'#0f1923',padding:'11px 28px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:editSaving?'not-allowed':'pointer',fontWeight:'700'}}>
+                {editSaving?'SAUVEGARDE...':'💾 SAUVEGARDER'}
+              </button>
+            </div>
+          </>}
         </>}
 
         {/* ── GESTION EMPLOYÉS ── */}
