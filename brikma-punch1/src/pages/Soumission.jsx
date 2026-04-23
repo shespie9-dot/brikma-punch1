@@ -18,12 +18,13 @@ const labelS = {fontSize:'0.6rem',fontWeight:'700',letterSpacing:'1.5px',textTra
 const cardS = {background:'#1a2a3a',border:'1px solid #2e4060',borderRadius:'9px',padding:'16px',marginBottom:'14px'}
 
 function calcLigne(l){ return Number(l.quantite||0)*Number(l.prix_unitaire||0) }
-function calcTotaux(ls, frais=0){
+function calcTotaux(ls, fraisPct=0){
   const sous_total = ls.reduce((s,l)=>s+calcLigne(l),0)
-  const base = sous_total + Number(frais)
+  const frais_montant = sous_total * Number(fraisPct) / 100
+  const base = sous_total + frais_montant
   const tps = base*TPS_RATE
   const tvq = base*TVQ_RATE
-  return {sous_total, frais_service:Number(frais), tps, tvq, total:base+tps+tvq}
+  return {sous_total, frais_service:Number(fraisPct), frais_montant, tps, tvq, total:base+tps+tvq}
 }
 function genNo(list){
   const yr = new Date().getFullYear()
@@ -289,21 +290,28 @@ export default function Soumission(){
       <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'20px',flexWrap:'wrap'}}>
           <div style={{minWidth:'180px'}}>
-            <label style={labelS}>Frais de service ($)</label>
-            <input
-              type="number"
-              value={fraisService}
-              onChange={e=>setFraisService(e.target.value)}
-              placeholder="0.00"
-              min="0"
-              style={{...inputS,maxWidth:'160px'}}
-            />
-            <div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'5px'}}>Optionnel — soumis aux taxes</div>
+            <label style={labelS}>Frais de service (%)</label>
+            <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
+              <input
+                type="number"
+                value={fraisService}
+                onChange={e=>setFraisService(e.target.value)}
+                placeholder="0"
+                min="0"
+                max="100"
+                style={{...inputS,maxWidth:'100px'}}
+              />
+              <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',color:'var(--orange)'}}>%</span>
+            </div>
+            {Number(fraisService)>0&&(
+              <div style={{fontSize:'0.75rem',color:'var(--orange)',marginTop:'5px'}}>= {fmt(totaux.frais_montant)} $ sur le sous-total</div>
+            )}
+            {!Number(fraisService)&&<div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'5px'}}>Optionnel — soumis aux taxes</div>}
           </div>
           <div style={{minWidth:'280px'}}>
             {[
               ['Sous-total', fmt(totaux.sous_total)+' $', 'white', false],
-              ...(Number(fraisService)>0 ? [['Frais de service', fmt(totaux.frais_service)+' $', 'var(--orange)', false]] : []),
+              ...(Number(fraisService)>0 ? [[`Frais de service (${fraisService}%)`, fmt(totaux.frais_montant)+' $', 'var(--orange)', false]] : []),
               ['TPS (5%)', fmt(totaux.tps)+' $', '#8fa8c8', false],
               ['TVQ (9.975%)', fmt(totaux.tvq)+' $', '#8fa8c8', false],
               ['TOTAL', fmt(totaux.total)+' $', 'var(--yellow)', true],
@@ -380,7 +388,7 @@ export default function Soumission(){
               <div style={{minWidth:'260px'}}>
                 {[
                   ['Sous-total', fmt(selected.sous_total)+' $'],
-                  ...(Number(selected.frais_service)>0?[['Frais de service', fmt(selected.frais_service)+' $']]:[]),
+                  ...(Number(selected.frais_service)>0?[[`Frais de service (${selected.frais_service}%)`, fmt(selected.sous_total*selected.frais_service/100)+' $']]:[]),
                   ['TPS (5%)', fmt(selected.tps)+' $'],
                   ['TVQ (9.975%)', fmt(selected.tvq)+' $'],
                 ].map(([lbl,val])=>(
