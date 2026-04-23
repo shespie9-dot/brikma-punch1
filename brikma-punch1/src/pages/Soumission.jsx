@@ -49,6 +49,9 @@ export default function Soumission(){
   const [msg,setMsg]=useState('')
   const [emailModal,setEmailModal]=useState(false)
   const [emailOverride,setEmailOverride]=useState('')
+  const [emailSending,setEmailSending]=useState(false)
+  const [emailResult,setEmailResult]=useState(null) // null | 'ok' | 'err'
+  const [emailErr,setEmailErr]=useState('')
 
   const [form,setForm]=useState({client_nom:'',client_tel:'',client_email:'',client_adresse:'',chantier:'',type_batiment:'',description:''})
   const [lignes,setLignes]=useState([{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
@@ -107,59 +110,34 @@ export default function Soumission(){
 
   function ouvrirEmailModal(){
     setEmailOverride(selected?.client_email||'')
+    setEmailResult(null)
+    setEmailErr('')
     setEmailModal(true)
   }
 
   async function envoyerEmail(){
     const dest = emailOverride.trim()
-    if(!dest){return}
-    // Mise à jour du courriel client si modifié
-    if(dest !== selected.client_email){
-      await supabase.from('soumissions').update({client_email:dest}).eq('id',selected.id)
-      setSelected(prev=>({...prev,client_email:dest}))
+    if(!dest) return
+    setEmailSending(true); setEmailResult(null); setEmailErr('')
+    try {
+      const resp = await fetch(
+        'https://dzhbgfbizufgmmrhdjqi.supabase.co/functions/v1/send-soumission',
+        {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({soumission_id: selected.id, email_override: dest}),
+        }
+      )
+      const data = await resp.json()
+      if(!resp.ok || data.error) throw new Error(data.error || 'Erreur envoi')
+      setEmailResult('ok')
+      setSelected(prev=>({...prev, statut:'envoye', client_email:dest, envoye_le: new Date().toISOString()}))
+      fetch()
+    } catch(e) {
+      setEmailResult('err')
+      setEmailErr(e.message)
     }
-    // Marquer comme envoyée
-    await changerStatut(selected.id,'envoye')
-    // Construire le corps du courriel
-    const lignesText = selectedLignes.map(l=>`  - ${l.description} (${l.quantite} ${l.unite} × ${fmt(l.prix_unitaire)} $) = ${fmt(l.sous_total)} $`).join('\n')
-    const body = [
-      `Bonjour ${selected.client_nom||''},`,
-      '',
-      `Veuillez trouver ci-joint notre soumission ${selected.no_soumission} pour les travaux suivants :`,
-      '',
-      `Chantier : ${selected.chantier||'—'}`,
-      selected.type_batiment ? `Type de bâtiment : ${selected.type_batiment}` : '',
-      '',
-      'DÉTAIL DES TRAVAUX :',
-      lignesText,
-      '',
-      `Sous-total HT : ${fmt(selected.sous_total)} $`,
-      Number(selected.frais_service)>0 ? `Frais de service (${selected.frais_service}%) : ${fmt(selected.frais_service_montant)} $` : '',
-      `TPS (5%) : ${fmt(selected.tps)} $`,
-      `TVQ (9,975%) : ${fmt(selected.tvq)} $`,
-      `NET À PAYER : ${fmt(selected.total)} $`,
-      '',
-      'Cette soumission est valide 30 jours à compter de ce jour.',
-      'Un acompte de 30 % est requis avant le début des travaux.',
-      '',
-      'Pour accepter cette soumission, veuillez nous retourner ce document signé avec la mention « Bon pour accord ».',
-      '',
-      'Nous demeurons disponibles pour toute question.',
-      '',
-      'Cordialement,',
-      'Brikma Construction Inc.',
-      '438-998-2220',
-      'RBQ : 5804-2102-01',
-    ].filter(l=>l!==null&&l!==undefined&&!(l===''&&false)).join('\n')
-
-    const subject = encodeURIComponent(`Soumission ${selected.no_soumission} — Brikma Construction Inc.`)
-    const bodyEnc = encodeURIComponent(body)
-    const mailto = `mailto:${encodeURIComponent(dest)}?subject=${subject}&body=${bodyEnc}`
-
-    // Ouvrir PDF d'abord, puis email
-    printSoumission(selected, selectedLignes)
-    setTimeout(()=>{ window.location.href = mailto }, 800)
-    setEmailModal(false)
+    setEmailSending(false)
   }
 
   /* ── LIST ── */
@@ -183,6 +161,7 @@ export default function Soumission(){
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',color:'var(--yellow)'}}>{fmt(s.total)} $</div>
               <div style={{fontSize:'0.7rem',color:'#6b7a8d'}}>{new Date(s.created_at).toLocaleDateString('fr-CA')}</div>
             </div>
+            {s.ouvert_le && <span style={{background:'rgba(34,160,96,0.15)',color:'#22a060',padding:'3px 9px',borderRadius:'4px',fontSize:'0.7rem',fontWeight:'700',letterSpacing:'1px',whiteSpace:'nowrap'}}>📬 Vu {new Date(s.ouvert_le).toLocaleDateString('fr-CA')}</span>}
             <StatutBadge statut={s.statut}/>
           </div>
         ))}
@@ -327,7 +306,9 @@ export default function Soumission(){
               </div>
               <div style={{textAlign:'right'}}>
                 <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.6rem',color:'var(--yellow)'}}>{fmt(selected.total)} $</div>
-                <div style={{fontSize:'0.7rem',color:'#6b7a8d',marginBottom:'6px'}}>{new Date(selected.created_at).toLocaleDateString('fr-CA')}</div>
+                <div style={{fontSize:'0.7rem',color:'#6b7a8d',marginBottom:'4px'}}>{new Date(selected.created_at).toLocaleDateString('fr-CA')}</div>
+                {selected.envoye_le && <div style={{fontSize:'0.7rem',color:'#e6a817',marginBottom:'4px'}}>📤 Envoyé {new Date(selected.envoye_le).toLocaleDateString('fr-CA')}</div>}
+                {selected.ouvert_le && <div style={{fontSize:'0.7rem',color:'#22a060',marginBottom:'6px'}}>📬 Vu le {new Date(selected.ouvert_le).toLocaleString('fr-CA',{dateStyle:'short',timeStyle:'short'})}</div>}
                 <StatutBadge statut={selected.statut}/>
               </div>
             </div>
@@ -399,75 +380,72 @@ export default function Soumission(){
       {/* ── MODAL EMAIL ── */}
       {emailModal && selected && (
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:'20px'}}>
-          <div style={{background:'#1a2a3a',border:'1px solid #2e4060',borderRadius:'12px',width:'100%',maxWidth:'560px',maxHeight:'90vh',overflow:'auto'}}>
-            {/* Modal header */}
+          <div style={{background:'#1a2a3a',border:'1px solid #2e4060',borderRadius:'12px',width:'100%',maxWidth:'520px'}}>
+            {/* Header */}
             <div style={{padding:'16px 20px',borderBottom:'1px solid #2e4060',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',letterSpacing:'2px',color:'#a8c4e0'}}>📧 ENVOYER PAR COURRIEL</div>
               <button onClick={()=>setEmailModal(false)} style={{background:'none',border:'none',color:'#6b7a8d',fontSize:'1.4rem',cursor:'pointer',lineHeight:1}}>×</button>
             </div>
 
             <div style={{padding:'20px'}}>
-              {/* Étape 1 — Destinataire */}
-              <div style={{marginBottom:'16px'}}>
-                <label style={{...labelS,marginBottom:'6px',display:'block'}}>Adresse courriel du client *</label>
-                <input
-                  type="email"
-                  value={emailOverride}
-                  onChange={e=>setEmailOverride(e.target.value)}
-                  placeholder="client@exemple.com"
-                  style={{...inputS,fontSize:'0.95rem'}}
-                />
-                {!emailOverride.trim() && (
-                  <div style={{color:'#e57373',fontSize:'0.78rem',marginTop:'4px'}}>⚠️ Aucun courriel enregistré pour ce client — entre-le ci-dessus</div>
-                )}
-                {emailOverride.trim() && (
-                  <div style={{color:'#22a060',fontSize:'0.78rem',marginTop:'4px'}}>✅ Courriel prêt</div>
-                )}
-              </div>
 
-              {/* Aperçu du courriel */}
-              <div style={{background:'#0f1923',border:'1px solid #2e4060',borderRadius:'7px',padding:'14px',marginBottom:'16px',fontSize:'0.82rem',lineHeight:'1.6'}}>
-                <div style={{marginBottom:'8px',paddingBottom:'8px',borderBottom:'1px solid #2e4060'}}>
-                  <span style={{color:'#6b7a8d'}}>À : </span><span style={{color:'white'}}>{emailOverride||'—'}</span><br/>
-                  <span style={{color:'#6b7a8d'}}>Objet : </span><span style={{color:'white'}}>Soumission {selected.no_soumission} — Brikma Construction Inc.</span>
+              {/* Succès */}
+              {emailResult==='ok' && (
+                <div style={{textAlign:'center',padding:'20px 0'}}>
+                  <div style={{fontSize:'2.8rem',marginBottom:'10px'}}>✅</div>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#22a060',marginBottom:'6px'}}>Courriel envoyé!</div>
+                  <div style={{color:'#6b7a8d',fontSize:'0.85rem',marginBottom:'6px'}}>La soumission a été envoyée à <strong style={{color:'white'}}>{emailOverride}</strong></div>
+                  <div style={{color:'#6b7a8d',fontSize:'0.8rem',marginBottom:'20px'}}>Tu recevras une notification quand le client ouvrira le courriel.</div>
+                  <button onClick={()=>setEmailModal(false)} style={{background:'var(--blue2)',border:'none',color:'white',padding:'10px 28px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>FERMER</button>
                 </div>
-                <div style={{color:'#c8d8e8',whiteSpace:'pre-line',fontSize:'0.8rem'}}>
-{`Bonjour ${selected.client_nom||''},
+              )}
 
-Veuillez trouver ci-joint notre soumission ${selected.no_soumission}.
-
-Chantier : ${selected.chantier||'—'}
-Net à payer : ${fmt(selected.total)} $
-
-Cette soumission est valide 30 jours.
-Un acompte de 30 % est requis avant le début des travaux.
-
-Pour accepter, retournez-nous ce document signé
-avec la mention « Bon pour accord ».
-
-Cordialement,
-Brikma Construction Inc. · 438-998-2220`}
+              {/* Erreur */}
+              {emailResult==='err' && (
+                <div style={{marginBottom:'14px',background:'rgba(192,57,43,0.12)',border:'1px solid rgba(192,57,43,0.4)',borderRadius:'7px',padding:'12px 14px',color:'#e57373',fontSize:'0.84rem'}}>
+                  ⚠️ {emailErr}
                 </div>
-              </div>
+              )}
 
-              {/* Instructions */}
-              <div style={{background:'rgba(59,130,196,0.08)',border:'1px solid rgba(59,130,196,0.25)',borderRadius:'7px',padding:'12px',marginBottom:'16px',fontSize:'0.8rem',color:'#8fa8c8',lineHeight:'1.7'}}>
-                <div style={{fontWeight:'700',color:'var(--blue2)',marginBottom:'4px'}}>📋 Comment ça fonctionne :</div>
-                <span style={{color:'var(--blue2)',fontWeight:'700'}}>1.</span> Le PDF de la soumission s'ouvrira — <strong style={{color:'white'}}>enregistre-le sur ton ordinateur</strong><br/>
-                <span style={{color:'var(--blue2)',fontWeight:'700'}}>2.</span> Ta messagerie s'ouvrira avec le courriel pré-rempli<br/>
-                <span style={{color:'var(--blue2)',fontWeight:'700'}}>3.</span> <strong style={{color:'white'}}>Attache le PDF</strong> au courriel avant d'envoyer
-              </div>
+              {/* Formulaire */}
+              {emailResult!=='ok' && (
+                <>
+                  <div style={{marginBottom:'16px'}}>
+                    <label style={{...labelS,marginBottom:'6px',display:'block'}}>Adresse courriel du client *</label>
+                    <input type="email" value={emailOverride} onChange={e=>setEmailOverride(e.target.value)}
+                      placeholder="client@exemple.com" style={{...inputS,fontSize:'0.95rem'}} disabled={emailSending}/>
+                    {!emailOverride.trim()
+                      ? <div style={{color:'#e57373',fontSize:'0.78rem',marginTop:'4px'}}>⚠️ Aucun courriel enregistré — entre-le ci-dessus</div>
+                      : <div style={{color:'#22a060',fontSize:'0.78rem',marginTop:'4px'}}>✅ {emailOverride}</div>
+                    }
+                  </div>
 
-              {/* Boutons */}
-              <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
-                <button onClick={()=>setEmailModal(false)} style={{background:'transparent',border:'1px solid #2e4060',color:'#6b7a8d',padding:'10px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.88rem',letterSpacing:'1.5px',cursor:'pointer'}}>ANNULER</button>
-                <button
-                  onClick={envoyerEmail}
-                  disabled={!emailOverride.trim()}
-                  style={{background:emailOverride.trim()?'var(--brick)':'#3a5070',border:'none',color:'white',padding:'10px 24px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:emailOverride.trim()?'pointer':'not-allowed'}}>
-                  📧 GÉNÉRER PDF + OUVRIR COURRIEL
-                </button>
-              </div>
+                  {/* Aperçu */}
+                  <div style={{background:'#0f1923',border:'1px solid #2e4060',borderRadius:'7px',padding:'12px 14px',marginBottom:'16px',fontSize:'0.8rem',lineHeight:'1.6'}}>
+                    <div style={{marginBottom:'7px',paddingBottom:'7px',borderBottom:'1px solid #2e4060'}}>
+                      <span style={{color:'#6b7a8d'}}>À : </span><span style={{color:'white'}}>{emailOverride||'—'}</span><br/>
+                      <span style={{color:'#6b7a8d'}}>Objet : </span><span style={{color:'white'}}>Soumission {selected.no_soumission} — Brikma Construction Inc.</span>
+                    </div>
+                    <div style={{color:'#8fa8c8',fontSize:'0.78rem'}}>
+                      Courriel HTML professionnel avec la soumission complète :<br/>
+                      logo · parties · tableau des travaux · totaux · zone de signature
+                    </div>
+                  </div>
+
+                  {/* Info tracking */}
+                  <div style={{background:'rgba(34,160,96,0.07)',border:'1px solid rgba(34,160,96,0.2)',borderRadius:'7px',padding:'10px 14px',marginBottom:'16px',fontSize:'0.79rem',color:'#6b9a78'}}>
+                    🔔 Tu seras notifié dans le dashboard quand le client ouvre le courriel
+                  </div>
+
+                  <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
+                    <button onClick={()=>setEmailModal(false)} disabled={emailSending} style={{background:'transparent',border:'1px solid #2e4060',color:'#6b7a8d',padding:'10px 20px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.88rem',letterSpacing:'1.5px',cursor:'pointer'}}>ANNULER</button>
+                    <button onClick={envoyerEmail} disabled={!emailOverride.trim()||emailSending}
+                      style={{background:emailOverride.trim()&&!emailSending?'var(--brick)':'#3a5070',border:'none',color:'white',padding:'10px 24px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:emailOverride.trim()&&!emailSending?'pointer':'not-allowed',minWidth:'180px'}}>
+                      {emailSending ? '⏳ ENVOI EN COURS...' : '📧 ENVOYER'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
