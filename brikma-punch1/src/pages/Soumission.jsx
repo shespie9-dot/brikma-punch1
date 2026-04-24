@@ -69,7 +69,8 @@ export default function Soumission(){
   }
 
   async function openDetail(s){
-    setSelected(s)
+    const{data:fresh}=await supabase.from('soumissions').select('*').eq('id',s.id).single()
+    setSelected(fresh||s)
     const{data}=await supabase.from('soumission_lignes').select('*').eq('soumission_id',s.id)
     setSelectedLignes(data||[])
     setView('detail')
