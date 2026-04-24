@@ -58,6 +58,7 @@ export default function Soumission(){
   const [fraisService,setFraisService]=useState(0)
   const [editId,setEditId]=useState(null)
   const [editNo,setEditNo]=useState('')
+  const [editOrigStatut,setEditOrigStatut]=useState('')
 
   useEffect(()=>{fetch()},[])
 
@@ -91,7 +92,7 @@ export default function Soumission(){
     setForm({client_nom:s.client_nom||'',client_tel:s.client_tel||'',client_email:s.client_email||'',client_adresse:s.client_adresse||'',chantier:s.chantier||'',type_batiment:s.type_batiment||'',description:s.description||''})
     setLignes(ls&&ls.length?ls.map(l=>({description:l.description,categorie:l.categorie,unite:l.unite,quantite:l.quantite,prix_unitaire:l.prix_unitaire})):[{description:'',categorie:'Matériaux',unite:'unité',quantite:1,prix_unitaire:0}])
     setFraisService(s.frais_service||0)
-    setEditId(s.id); setEditNo(s.no_soumission)
+    setEditId(s.id); setEditNo(s.no_soumission); setEditOrigStatut(s.statut||'brouillon')
     setMsg('')
     setView('form')
   }
@@ -116,7 +117,8 @@ export default function Soumission(){
     const{sous_total,frais_service_montant,tps,tvq,total}=calcTotaux(lignes,fraisService)
     let soumId
     if(editId){
-      const{error:e1}=await supabase.from('soumissions').update({...form,statut,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).eq('id',editId)
+      const statutFinal = editOrigStatut || statut
+      const{error:e1}=await supabase.from('soumissions').update({...form,statut:statutFinal,frais_service:Number(fraisService)||0,frais_service_montant,sous_total,tps,tvq,total}).eq('id',editId)
       if(e1){setMsg('Erreur: '+e1.message);setSaving(false);return}
       await supabase.from('soumission_lignes').delete().eq('soumission_id',editId)
       soumId=editId
@@ -131,7 +133,7 @@ export default function Soumission(){
     setMsg('✅ Soumission sauvegardée!')
     fetch()
     setSaving(false)
-    setTimeout(()=>{setView('list');setMsg('');setEditId(null);setEditNo('')},1200)
+    setTimeout(()=>{setView('list');setMsg('');setEditId(null);setEditNo('');setEditOrigStatut('')},1200)
   }
 
   async function changerStatut(id,statut){
@@ -209,7 +211,7 @@ export default function Soumission(){
   if(view==='form') return(
     <div><style>{css}</style>
       <button onClick={()=>setView('list')} style={{background:'transparent',border:'1px solid var(--border)',color:'#6b7a8d',padding:'7px 14px',borderRadius:'6px',cursor:'pointer',fontSize:'0.82rem',marginBottom:'16px'}}>← Retour</button>
-      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>{editId?`✏️ MODIFIER BROUILLON — ${editNo}`:`📋 NOUVELLE SOUMISSION — ${genNo(list)}`}</div>
+      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.2rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>{editId?`✏️ MODIFIER — ${editNo}`:`📋 NOUVELLE SOUMISSION — ${genNo(list)}`}</div>
 
       {/* CLIENT */}
       <div style={cardS}>
@@ -319,8 +321,15 @@ export default function Soumission(){
       {msg&&<div style={{padding:'10px 14px',borderRadius:'7px',marginBottom:'12px',background:msg.includes('✅')?'rgba(34,160,96,0.15)':'rgba(192,57,43,0.15)',color:msg.includes('✅')?'#22a060':'#e57373',fontSize:'0.84rem'}}>{msg}</div>}
 
       <div style={{display:'flex',gap:'10px',justifyContent:'flex-end'}}>
-        <button onClick={()=>sauvegarder('brouillon')} disabled={saving} style={{background:'transparent',border:'1.5px solid var(--border)',color:'#6b7a8d',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>💾 BROUILLON</button>
-        <button onClick={()=>sauvegarder('envoye')} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>{saving?'...':'📤 SOUMETTRE AU CLIENT'}</button>
+        {editId ? (
+          <button onClick={()=>sauvegarder(editOrigStatut)} disabled={saving}
+            style={{background:'var(--yellow)',border:'none',color:'#0f1923',padding:'11px 28px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer',fontWeight:'700'}}>
+            {saving?'...':'💾 SAUVEGARDER'}
+          </button>
+        ) : <>
+          <button onClick={()=>sauvegarder('brouillon')} disabled={saving} style={{background:'transparent',border:'1.5px solid var(--border)',color:'#6b7a8d',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:'pointer'}}>💾 BROUILLON</button>
+          <button onClick={()=>sauvegarder('envoye')} disabled={saving} style={{background:'var(--brick)',border:'none',color:'white',padding:'11px 22px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.9rem',letterSpacing:'2px',cursor:saving?'not-allowed':'pointer'}}>{saving?'...':'📤 SOUMETTRE AU CLIENT'}</button>
+        </>}
       </div>
     </div>
   )
