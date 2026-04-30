@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 
 const JOURS = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
@@ -20,23 +20,39 @@ function calcHrs(d){
   if(d.dinerOut&&d.dinerIn)tot-=(toMin(d.dinerIn)-toMin(d.dinerOut))
   return Math.max(0,tot/60)
 }
-function rawOT(d){return Math.max(0,calcHrs(d)-SEUIL_OT)}
-function getOT(d){return d.otApprouve?rawOT(d):0}
-function getReg(d){return d.otApprouve?Math.min(calcHrs(d),SEUIL_OT):calcHrs(d)}
+function getOT(d){return Math.max(0,calcHrs(d)-SEUIL_OT)}
+function getReg(d){return Math.min(calcHrs(d),SEUIL_OT)}
 
 function getLundi(){
   const n=new Date();const dow=n.getDay();const diff=n.getDate()-dow+(dow===0?-6:1)
   const m=new Date(n);m.setDate(diff);return m
 }
 
+function fmtDateISO(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+
+function formatSemaineDu(dateStr){
+  const d=new Date(dateStr+'T00:00:00')
+  return d.toLocaleDateString('fr-CA',{day:'numeric',month:'long'})
+}
+
+function getDayStatus(d){
+  if(d.statut!=='present')return{emoji:'✅',label:'Complété',color:'var(--green2)'}
+  if(d.arrive&&d.depart)return{emoji:'✅',label:'Complété',color:'var(--green2)'}
+  if(d.arrive||d.depart)return{emoji:'✏️',label:'En cours',color:'var(--orange)'}
+  return{emoji:'⬜',label:'Pas encore',color:'var(--muted)'}
+}
+
+function defaultJours(){
+  return JOURS.map((j,i)=>({
+    jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',
+    statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:''
+  }))
+}
+
 export default function EmployePunch({employe,onLogout}){
   const [lundi,setLundi]=useState(getLundi())
   const [chantierPrincipal,setChantierPrincipal]=useState('')
-  const [jours,setJours]=useState(JOURS.map((j,i)=>({
-    jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',
-    statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',
-    typePaie:employe.type_paie||'hors_decret'
-  })))
+  const [jours,setJours]=useState(defaultJours())
   const [tauxReg,setTauxReg]=useState(employe.taux_regulier||0)
   const [tauxOT,setTauxOT]=useState(employe.taux_ot||0)
   const [indem,setIndem]=useState(0)
@@ -45,15 +61,110 @@ export default function EmployePunch({employe,onLogout}){
   const [loading,setLoading]=useState(false)
   const [success,setSuccess]=useState(false)
   const [err,setErr]=useState('')
+  const [saveStatus,setSaveStatus]=useState('idle') // 'idle'|'saving'|'saved'|'error'
+  const [autresBrouillons,setAutresBrouillons]=useState([])
+
+  const debounceRef=useRef(null)
+  const joursRef=useRef(jours)
+  const chantierRef=useRef(chantierPrincipal)
+  const lundiRef=useRef(lundi)
+
+  useEffect(()=>{joursRef.current=jours},[jours])
+  useEffect(()=>{chantierRef.current=chantierPrincipal},[chantierPrincipal])
+  useEffect(()=>{lundiRef.current=lundi},[lundi])
 
   const dateJour=(i)=>{const d=new Date(lundi);d.setDate(d.getDate()+i);return d}
   const fmtDate=(d)=>d.toLocaleDateString('fr-CA',{day:'2-digit',month:'short'})
-  const fmtDateISO=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 
-  function updJour(i,k,v){setJours(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})}
+  useEffect(()=>{loadBrouillons()},[lundi,employe.id])
+
+  async function loadBrouillons(){
+    const semaineDu=fmtDateISO(lundi)
+    const{data,error}=await supabase
+      .from('brouillons').select('*')
+      .eq('employe_id',employe.id).eq('semaine_du',semaineDu)
+      .order('jour_index')
+
+    if(!error&&data&&data.length>0){
+      const newJours=defaultJours()
+      data.forEach(b=>{
+        const i=b.jour_index
+        if(i>=0&&i<7){
+          newJours[i]={
+            jour:JOURS[i],
+            arrive:b.arrive||'',
+            dinerOut:b.diner_out||'',
+            dinerIn:b.diner_in||'',
+            depart:b.depart||'',
+            statut:b.statut||(i<5?'present':'absent'),
+            type:b.type_travail||'Normal',
+            adresse:b.adresse_chantier||'',
+            otApprouve:b.ot_approuve||false,
+            otRaison:b.ot_raison||'',
+            notes:b.notes||''
+          }
+        }
+      })
+      setJours(newJours)
+      joursRef.current=newJours
+      const firstAddr=data.find(b=>b.adresse_chantier)
+      if(firstAddr){setChantierPrincipal(firstAddr.adresse_chantier);chantierRef.current=firstAddr.adresse_chantier}
+    }else{
+      const def=defaultJours()
+      setJours(def);joursRef.current=def
+      setChantierPrincipal('');chantierRef.current=''
+    }
+
+    const{data:autres}=await supabase
+      .from('brouillons').select('semaine_du')
+      .eq('employe_id',employe.id).neq('semaine_du',semaineDu)
+      .order('semaine_du',{ascending:false}).limit(3)
+    setAutresBrouillons(autres||[])
+  }
+
+  function triggerAutoSave(){
+    if(debounceRef.current)clearTimeout(debounceRef.current)
+    setSaveStatus('saving')
+    debounceRef.current=setTimeout(autoSave,1000)
+  }
+
+  async function autoSave(){
+    const currentLundi=lundiRef.current
+    const semaineDu=fmtDateISO(currentLundi)
+    const js=joursRef.current
+    const chantier=chantierRef.current
+    const dateJourLocal=(i)=>{const d=new Date(currentLundi);d.setDate(d.getDate()+i);return d}
+
+    const upserts=js.map((d,i)=>({
+      employe_id:employe.id,semaine_du:semaineDu,jour_index:i,
+      jour_nom:d.jour,jour_date:fmtDateISO(dateJourLocal(i)),
+      statut:d.statut,
+      arrive:d.arrive||null,diner_out:d.dinerOut||null,diner_in:d.dinerIn||null,depart:d.depart||null,
+      adresse_chantier:d.adresse||chantier||null,
+      type_travail:d.type,ot_approuve:d.otApprouve,
+      ot_raison:d.otRaison||null,notes:d.notes||null,
+      updated_at:new Date().toISOString()
+    }))
+
+    const{error}=await supabase.from('brouillons')
+      .upsert(upserts,{onConflict:'employe_id,semaine_du,jour_index'})
+
+    if(error){setSaveStatus('error')}
+    else{
+      setSaveStatus('saved')
+      setTimeout(()=>setSaveStatus(s=>s==='saved'?'idle':s),3000)
+    }
+  }
+
+  function updJour(i,k,v){
+    setJours(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})
+    triggerAutoSave()
+  }
+
   function remplirAdresses(val){
     setChantierPrincipal(val)
     setJours(prev=>prev.map(d=>d.adresse===''||d.adresse===chantierPrincipal?{...d,adresse:val}:d))
+    triggerAutoSave()
   }
 
   const totHrs=jours.reduce((s,d)=>s+calcHrs(d),0)
@@ -62,15 +173,8 @@ export default function EmployePunch({employe,onLogout}){
   const joursT=jours.filter(d=>d.statut==='present').length
 
   function calcPaie(){
-    const totals=jours.reduce((acc,d)=>{
-      if(d.statut!=='present') return acc
-      const reg=getReg(d),ot=getOT(d)
-      const r=d.typePaie==='ccq'
-        ?{reg:reg*tauxCCQ,ot:ot*(tauxCCQ*1.5)}
-        :{reg:reg*tauxReg,ot:ot*tauxOT}
-      return{reg:acc.reg+r.reg,ot:acc.ot+r.ot}
-    },{reg:0,ot:0})
-    return{reg:totals.reg,ot:totals.ot,total:totals.reg+totals.ot+Number(indem)}
+    if(typePaie==='ccq')return{reg:totReg*tauxCCQ,ot:totOT*(tauxCCQ*1.5),total:totReg*tauxCCQ+totOT*(tauxCCQ*1.5)+Number(indem)}
+    return{reg:totReg*tauxReg,ot:totOT*tauxOT,total:totReg*tauxReg+totOT*tauxOT+Number(indem)}
   }
   const paie=calcPaie()
 
@@ -79,36 +183,65 @@ export default function EmployePunch({employe,onLogout}){
     setLoading(true);setErr('')
     try{
       const semaineDu=fmtDateISO(lundi)
-      // Insert feuille
-      const typesPaie=[...new Set(jours.filter(d=>d.statut==='present').map(d=>d.typePaie))]
-      const typePaieGlobal=typesPaie.length===1?typesPaie[0]:'mixte'
-      const {data:feuille,error:e1}=await supabase.from('feuilles_temps').insert({
+      const{data:feuille,error:e1}=await supabase.from('feuilles_temps').insert({
         employe_id:employe.id,employe_nom:employe.nom,semaine_du:semaineDu,
         chantier_principal:chantierPrincipal,statut:'soumis',
         total_heures:totHrs,total_reg:totReg,total_ot:totOT,
-        type_paie:typePaieGlobal,taux_reg:tauxReg,
-        taux_ot:tauxOT,paie_brute:paie.total
+        type_paie:typePaie,taux_reg:typePaie==='ccq'?tauxCCQ:tauxReg,
+        taux_ot:typePaie==='ccq'?tauxCCQ*1.5:tauxOT,paie_brute:paie.total
       }).select().single()
       if(e1)throw e1
 
-      // Insert jours
       const joursData=jours.map((d,i)=>({
         feuille_id:feuille.id,jour_nom:d.jour,
         jour_date:fmtDateISO(dateJour(i)),statut:d.statut,
         arrive:d.arrive||null,diner_out:d.dinerOut||null,diner_in:d.dinerIn||null,depart:d.depart||null,
         adresse_chantier:d.adresse,type_travail:d.type,
         heures_reg:getReg(d),heures_ot:getOT(d),
-        ot_approuve:d.otApprouve,ot_raison:d.otRaison,notes:d.notes,
-        type_paie:d.typePaie
+        ot_approuve:d.otApprouve,ot_raison:d.otRaison,notes:d.notes
       }))
-      const {error:e2}=await supabase.from('jours_travail').insert(joursData)
+      const{error:e2}=await supabase.from('jours_travail').insert(joursData)
       if(e2)throw e2
+
+      await supabase.from('brouillons').delete()
+        .eq('employe_id',employe.id).eq('semaine_du',semaineDu)
+
+      // Notifier le patron par email (Resend via Edge Function)
+      try{
+        await fetch('https://dzhbgfbizufgmmrhdjqi.supabase.co/functions/v1/notifier-patron',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            employe_nom:employe.nom,
+            semaine_du:semaineDu,
+            chantier_principal:chantierPrincipal,
+            total_heures:totHrs,
+            total_reg:totReg,
+            total_ot:totOT,
+            paie_brute:paie.total,
+            jours:joursData
+          })
+        })
+      }catch(_){/* email non-bloquant */}
+
       setSuccess(true)
     }catch(e){setErr('Erreur: '+e.message)}
     setLoading(false)
   }
 
-  if(success) return (
+  function continuerBrouillon(semaineDuStr){
+    setLundi(new Date(semaineDuStr+'T00:00:00'))
+  }
+
+  function nouvellesSemaine(){
+    setSuccess(false)
+    setJours(defaultJours())
+    setChantierPrincipal('')
+    setSaveStatus('idle')
+    setLundi(getLundi())
+  }
+
+  if(success)return(
     <div style={{minHeight:'100vh',background:'var(--bg)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'Outfit',sans-serif"}}>
       <style>{css}</style>
       <div style={{textAlign:'center',padding:'40px'}}>
@@ -116,22 +249,27 @@ export default function EmployePunch({employe,onLogout}){
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.8rem',letterSpacing:'3px',color:'white',marginBottom:'8px'}}>Feuille soumise!</div>
         <div style={{color:'var(--muted)',marginBottom:'8px'}}>Semaine du {lundi.toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
         <div style={{color:'var(--green2)',fontSize:'1.1rem',fontWeight:'600',marginBottom:'24px'}}>{totHrs.toFixed(1)}h travaillées · Paie brute: {paie.total.toFixed(2)} $</div>
-        <button onClick={()=>{setSuccess(false);setJours(JOURS.map((j,i)=>({jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',typePaie:employe.type_paie||'hors_decret'})))}} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
+        <button onClick={nouvellesSemaine} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
         <button onClick={onLogout} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',cursor:'pointer'}}>Déconnexion</button>
       </div>
     </div>
   )
 
-  return (
+  return(
     <div style={{minHeight:'100vh',background:'var(--bg)',fontFamily:"'Outfit',sans-serif"}}>
       <style>{css}</style>
 
       {/* HEADER */}
       <div style={{background:'var(--navy)',borderBottom:'4px solid',borderImage:'linear-gradient(90deg,#c0623a,#3b82c4) 1'}}>
-        <div style={{maxWidth:'900px',margin:'0 auto',padding:'16px 20px',display:'flex',alignItems:'center',gap:'14px'}}>
+        <div style={{maxWidth:'900px',margin:'0 auto',padding:'16px 20px',display:'flex',alignItems:'center',gap:'14px',flexWrap:'wrap'}}>
           <div style={{flex:1}}>
             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.5rem',letterSpacing:'3px',color:'white'}}>Brikma Construction</div>
             <div style={{fontSize:'0.7rem',color:'var(--brick)',letterSpacing:'2px',textTransform:'uppercase'}}>Feuille de temps</div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
+            {saveStatus==='saving'&&<span style={{fontSize:'0.73rem',color:'var(--muted)'}}>⏳ Sauvegarde...</span>}
+            {saveStatus==='saved'&&<span style={{fontSize:'0.73rem',color:'var(--green2)'}}>💾 Sauvegardé</span>}
+            {saveStatus==='error'&&<span style={{fontSize:'0.73rem',color:'var(--red)'}}>⚠️ Erreur de sauvegarde</span>}
           </div>
           <div style={{textAlign:'right'}}>
             <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>👷 {employe.nom}</div>
@@ -142,6 +280,19 @@ export default function EmployePunch({employe,onLogout}){
       </div>
 
       <div style={{maxWidth:'900px',margin:'0 auto',padding:'20px 14px 60px'}}>
+
+        {/* BANNIÈRE AUTRE BROUILLON */}
+        {autresBrouillons.length>0&&(
+          <div style={{background:'rgba(59,130,196,0.1)',border:'1px solid var(--blue2)',borderRadius:'8px',padding:'12px 16px',marginBottom:'14px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+            <span style={{fontSize:'0.85rem',color:'var(--blue2)',flex:1}}>
+              📋 Tu as une feuille en cours — semaine du {formatSemaineDu(autresBrouillons[0].semaine_du)}
+            </span>
+            <button onClick={()=>continuerBrouillon(autresBrouillons[0].semaine_du)}
+              style={{background:'var(--blue)',border:'none',color:'white',padding:'7px 16px',borderRadius:'6px',fontFamily:"'Outfit',sans-serif",fontSize:'0.82rem',fontWeight:'600',cursor:'pointer'}}>
+              Continuer →
+            </button>
+          </div>
+        )}
 
         {/* SEMAINE + CHANTIER */}
         <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'10px',padding:'18px',marginBottom:'16px'}}>
@@ -164,13 +315,14 @@ export default function EmployePunch({employe,onLogout}){
         {/* JOURS */}
         <div style={{display:'flex',flexDirection:'column',gap:'10px',marginBottom:'16px'}}>
           {jours.map((d,i)=>{
-            const hrs=calcHrs(d); const ot=rawOT(d); const hasOT=ot>0
+            const hrs=calcHrs(d);const ot=getOT(d);const hasOT=ot>0
             const dDate=dateJour(i)
-            return (
+            const dayStatus=getDayStatus(d)
+            return(
               <div key={i} style={{background:'var(--card)',border:`1.5px solid ${hasOT?'var(--orange)':'var(--border)'}`,borderRadius:'9px',overflow:'hidden'}}>
                 {/* Jour header */}
-                <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'11px 16px',borderBottom:'1px solid var(--border)',flexWrap:'wrap',gap:'8px'}}>
-                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'1.5px',color:'var(--navy) ',minWidth:'80px',color:'#a8c4e0'}}>{d.jour}</div>
+                <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'11px 16px',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'1.5px',minWidth:'80px',color:'#a8c4e0'}}>{d.jour}</div>
                   <div style={{fontSize:'0.73rem',color:'var(--muted)',minWidth:'65px'}}>{fmtDate(dDate)}</div>
                   <select value={d.statut} onChange={e=>updJour(i,'statut',e.target.value)}
                     style={{padding:'5px 9px',borderRadius:'5px',border:'1.5px solid',fontSize:'0.78rem',fontWeight:'600',cursor:'pointer',outline:'none',
@@ -182,20 +334,10 @@ export default function EmployePunch({employe,onLogout}){
                     <option value="conge">🌴 Congé</option>
                     <option value="ferie">🏛 Férié</option>
                   </select>
-                  {d.statut==='present' && (
-                    <div style={{display:'flex',gap:'3px'}}>
-                      {[['hors_decret','HD'],['ccq','CCQ']].map(([val,lbl])=>(
-                        <button key={val} onClick={()=>updJour(i,'typePaie',val)} style={{
-                          padding:'3px 9px',borderRadius:'4px',
-                          border:`1.5px solid ${d.typePaie===val?'var(--blue2)':'var(--border)'}`,
-                          background:d.typePaie===val?'rgba(59,130,196,0.25)':'transparent',
-                          color:d.typePaie===val?'var(--blue2)':'var(--muted)',
-                          fontSize:'0.7rem',fontWeight:'700',cursor:'pointer',transition:'all 0.15s'
-                        }}>{lbl}</button>
-                      ))}
-                    </div>
-                  )}
-                  {hasOT && <span style={{background:'var(--orange)',color:'white',fontSize:'0.68rem',fontWeight:'700',letterSpacing:'1px',padding:'3px 8px',borderRadius:'4px'}}>OT +{ot.toFixed(1)}h</span>}
+                  <span style={{fontSize:'0.72rem',fontWeight:'600',color:dayStatus.color,padding:'2px 8px',borderRadius:'4px',background:'rgba(255,255,255,0.04)'}}>
+                    {dayStatus.emoji} {dayStatus.label}
+                  </span>
+                  {hasOT&&<span style={{background:'var(--orange)',color:'white',fontSize:'0.68rem',fontWeight:'700',letterSpacing:'1px',padding:'3px 8px',borderRadius:'4px'}}>OT +{ot.toFixed(1)}h</span>}
                   <div style={{marginLeft:'auto',fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.05rem',letterSpacing:'1px',padding:'3px 10px',borderRadius:'5px',
                     color:hrs===0?'#3a5070':hasOT?'var(--orange)':'var(--green2)',
                     background:hrs===0?'transparent':hasOT?'rgba(217,119,6,0.1)':'rgba(34,160,96,0.1)'}}>
@@ -204,7 +346,7 @@ export default function EmployePunch({employe,onLogout}){
                 </div>
 
                 {/* Jour body */}
-                {d.statut==='present' && (
+                {d.statut==='present'&&(
                   <div style={{padding:'13px 16px'}}>
                     <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr) 2fr 1fr',gap:'10px',marginBottom:hasOT?'12px':'0'}}>
                       {[['Arrivée','arrive'],['Dîner Sortie','dinerOut'],['Dîner Retour','dinerIn'],['Départ','depart']].map(([lbl,key])=>(
@@ -229,7 +371,7 @@ export default function EmployePunch({employe,onLogout}){
                     </div>
 
                     {/* OT SECTION */}
-                    {hasOT && (
+                    {hasOT&&(
                       <div style={{background:'rgba(217,119,6,0.08)',border:'1.5px solid rgba(217,119,6,0.3)',borderRadius:'7px',padding:'12px 14px'}}>
                         <div style={{fontSize:'0.68rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--orange)',marginBottom:'10px'}}>⚡ OVERTIME — {ot.toFixed(2)}h au-delà de {SEUIL_OT}h</div>
                         <div style={{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}}>
@@ -244,7 +386,7 @@ export default function EmployePunch({employe,onLogout}){
                         </div>
                       </div>
                     )}
-                    {!hasOT && (
+                    {!hasOT&&(
                       <input type="text" value={d.notes} onChange={e=>updJour(i,'notes',e.target.value)} placeholder="Notes..."
                         style={{width:'100%',background:'#0f1923',border:'1.5px solid var(--border)',color:'white',borderRadius:'5px',padding:'7px 10px',fontSize:'0.83rem',outline:'none',marginTop:'8px'}}/>
                     )}
@@ -268,23 +410,41 @@ export default function EmployePunch({employe,onLogout}){
         {/* PAIE */}
         <div style={{background:'linear-gradient(135deg,var(--navy),#1a3a5a)',border:'1px solid var(--border)',borderRadius:'10px',padding:'18px',marginBottom:'16px'}}>
           <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'#a8c4e0',marginBottom:'14px'}}>💵 CALCUL DE PAIE</div>
-          
-          <div style={{fontSize:'0.67rem',color:'#6b7a8d',marginBottom:'10px'}}>💡 Le type CCQ / HD se choisit par jour directement sur chaque journée ci-haut.</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:'12px'}}>
-            {[
-              ['Taux CCQ ($/h)',tauxCCQ,setTauxCCQ,'OT × 1.5 = '+(tauxCCQ*1.5).toFixed(2)+' $/h'],
-              ['Taux rég. HD ($/h)',tauxReg,setTauxReg,null],
-              ['Taux OT HD ($/h)',tauxOT,setTauxOT,null],
-              ['Indemnités ($)',indem,setIndem,null]
-            ].map(([lbl,val,set,hint])=>(
-              <div key={lbl}>
-                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>{lbl}</div>
-                <input type="number" value={val} onChange={e=>set(e.target.value)} placeholder="0.00"
-                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
-                {hint && <div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'3px'}}>{hint}</div>}
-              </div>
+
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'14px'}}>
+            {[['hors_decret','Hors décret'],['ccq','CCQ – Décret construction']].map(([val,lbl])=>(
+              <button key={val} onClick={()=>setTypePaie(val)}
+                style={{padding:'9px',border:`2px solid ${typePaie===val?'var(--blue2)':'rgba(255,255,255,0.1)'}`,borderRadius:'7px',background:typePaie===val?'rgba(59,130,196,0.2)':'transparent',color:typePaie===val?'var(--blue2)':'#6b7a8d',fontFamily:"'Outfit',sans-serif",fontSize:'0.82rem',fontWeight:'600',cursor:'pointer',transition:'all 0.2s'}}>
+                {lbl}
+              </button>
             ))}
           </div>
+
+          {typePaie==='ccq'?(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px'}}>
+              <div>
+                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>Taux CCQ ($/h)</div>
+                <input type="number" value={tauxCCQ} onChange={e=>setTauxCCQ(e.target.value)} placeholder="Taux CCQ selon classification"
+                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
+                <div style={{fontSize:'0.7rem',color:'#6b7a8d',marginTop:'4px'}}>OT automatique × 1.5 = {(tauxCCQ*1.5).toFixed(2)} $/h</div>
+              </div>
+              <div>
+                <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>Indemnités ($)</div>
+                <input type="number" value={indem} onChange={e=>setIndem(e.target.value)} placeholder="Transport, repas..."
+                  style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
+              </div>
+            </div>
+          ):(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'12px'}}>
+              {[['Taux régulier ($/h)',tauxReg,setTauxReg],['Taux OT ($/h)',tauxOT,setTauxOT],['Indemnités ($)',indem,setIndem]].map(([lbl,val,set])=>(
+                <div key={lbl}>
+                  <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>{lbl}</div>
+                  <input type="number" value={val} onChange={e=>set(e.target.value)} placeholder="0.00"
+                    style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={{marginTop:'14px',paddingTop:'12px',borderTop:'1px solid rgba(255,255,255,0.1)',display:'flex',gap:'20px',justifyContent:'flex-end',flexWrap:'wrap'}}>
             {[['Paie régulière',paie.reg.toFixed(2)+' $'],['Paie OT',paie.ot.toFixed(2)+' $'],['Indemnités',Number(indem).toFixed(2)+' $']].map(([lbl,val])=>(
@@ -300,11 +460,11 @@ export default function EmployePunch({employe,onLogout}){
           </div>
         </div>
 
-        {err && <div style={{background:'rgba(192,57,43,0.15)',border:'1px solid rgba(192,57,43,0.4)',color:'#e57373',borderRadius:'7px',padding:'10px 14px',fontSize:'0.82rem',marginBottom:'14px'}}>⚠️ {err}</div>}
+        {err&&<div style={{background:'rgba(192,57,43,0.15)',border:'1px solid rgba(192,57,43,0.4)',color:'#e57373',borderRadius:'7px',padding:'10px 14px',fontSize:'0.82rem',marginBottom:'14px'}}>⚠️ {err}</div>}
 
         <button onClick={soumettre} disabled={loading}
           style={{width:'100%',background:loading?'#3a5070':'var(--brick)',border:'none',color:'white',padding:'14px',borderRadius:'8px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',letterSpacing:'2px',cursor:loading?'not-allowed':'pointer',transition:'all 0.2s'}}>
-          {loading ? 'ENVOI EN COURS...' : 'SOUMETTRE LA FEUILLE →'}
+          {loading?'ENVOI EN COURS...':'SOUMETTRE AU PATRON →'}
         </button>
       </div>
     </div>
