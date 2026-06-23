@@ -74,6 +74,7 @@ export default function PatronDashboard({onLogout}){
   const [empLoading,setEmpLoading]=useState(false)
   const [empMsg,setEmpMsg]=useState('')
   const [editEmpId,setEditEmpId]=useState(null)
+  const [empSearch,setEmpSearch]=useState('')
 
   useEffect(()=>{fetchAll()},[])
 
@@ -245,6 +246,12 @@ export default function PatronDashboard({onLogout}){
     if(filtreSemaine&&f.semaine_du!==filtreSemaine)return false
     if(filtreStatut&&f.statut!==filtreStatut)return false
     return true
+  })
+
+  const employesFiltres=employes.filter(emp=>{
+    if(!empSearch)return true
+    const q=empSearch.toLowerCase()
+    return emp.nom?.toLowerCase().includes(q)||emp.code_acces?.toLowerCase().includes(q)||emp.poste?.toLowerCase().includes(q)
   })
 
   const stats={
@@ -551,8 +558,11 @@ export default function PatronDashboard({onLogout}){
           </div>
 
           {/* Liste */}
+          <input value={empSearch} onChange={e=>setEmpSearch(e.target.value)} placeholder="🔎 Rechercher par nom, code ou poste..."
+            style={{...inputS,marginBottom:'10px'}}/>
+          {employesFiltres.length===0 && <div style={{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'0.85rem'}}>Aucun employé trouvé</div>}
           <div style={{display:'flex',flexDirection:'column',gap:'8px'}}>
-            {employes.map(emp=>(
+            {employesFiltres.map(emp=>(
               <div key={emp.id} style={{background:'var(--card)',border:`1.5px solid ${emp.actif?'var(--border)':'rgba(192,57,43,0.3)'}`,borderRadius:'8px',padding:'12px 16px',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap',opacity:emp.actif?1:0.6}}>
                 <div style={{flex:1,minWidth:'140px'}}>
                   <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>{emp.nom}</div>

@@ -48,6 +48,11 @@ export default function EmployePunch({employe,onLogout}){
   const [saveStatus,setSaveStatus]=useState('idle') // idle | saving | saved | error
   const [savedDays,setSavedDays]=useState(new Set())
   const [otherBrouillon,setOtherBrouillon]=useState(null)
+  const [view,setView]=useState('punch') // punch | historique | detailFeuille
+  const [mesFeuilles,setMesFeuilles]=useState([])
+  const [feuillesLoading,setFeuillesLoading]=useState(false)
+  const [selectedFeuille,setSelectedFeuille]=useState(null)
+  const [selectedJours,setSelectedJours]=useState([])
 
   const stateRef=useRef(null)
   const debounceRefs=useRef({})
@@ -113,6 +118,31 @@ export default function EmployePunch({employe,onLogout}){
     if(!otherBrouillon)return
     setLundi(new Date(otherBrouillon+'T00:00:00'))
     setOtherBrouillon(null)
+  }
+
+  async function verMesFeuilles(){
+    setFeuillesLoading(true)
+    const {data}=await supabase.from('feuilles_temps').select('*').eq('employe_id',employe.id).order('submitted_at',{ascending:false})
+    setMesFeuilles(data||[])
+    setFeuillesLoading(false)
+    setView('historique')
+  }
+
+  async function verDetailFeuille(f){
+    setSelectedFeuille(f)
+    const {data}=await supabase.from('jours_travail').select('*').eq('feuille_id',f.id).order('jour_date')
+    setSelectedJours(data||[])
+    setView('detailFeuille')
+  }
+
+  function StatutFeuilleBadge({statut}){
+    const cfg={
+      soumis:{bg:'rgba(59,130,196,0.15)',color:'#3b82c4',txt:'🕐 En attente'},
+      approuve:{bg:'rgba(34,160,96,0.15)',color:'#22a060',txt:'✅ Approuvée'},
+      refuse:{bg:'rgba(192,57,43,0.15)',color:'#e57373',txt:'❌ Refusée'}
+    }
+    const c=cfg[statut]||cfg.soumis
+    return <span style={{background:c.bg,color:c.color,padding:'3px 10px',borderRadius:'4px',fontSize:'0.75rem',fontWeight:'700',letterSpacing:'1px'}}>{c.txt}</span>
   }
 
   function scheduleSave(i){
@@ -242,6 +272,94 @@ export default function EmployePunch({employe,onLogout}){
     </div>
   )
 
+  if(view==='historique') return (
+    <div style={{minHeight:'100vh',background:'var(--bg)',fontFamily:"'Outfit',sans-serif"}}>
+      <style>{css}</style>
+      <div style={{background:'var(--navy)',borderBottom:'4px solid',borderImage:'linear-gradient(90deg,#c0623a,#3b82c4) 1'}}>
+        <div style={{maxWidth:'900px',margin:'0 auto',padding:'16px 20px',display:'flex',alignItems:'center',gap:'14px'}}>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.5rem',letterSpacing:'3px',color:'white'}}>Brikma Construction</div>
+            <div style={{fontSize:'0.7rem',color:'var(--brick)',letterSpacing:'2px',textTransform:'uppercase'}}>Mes feuilles de temps</div>
+          </div>
+          <button onClick={()=>setView('punch')} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem'}}>⬅ Retour</button>
+        </div>
+      </div>
+      <div style={{maxWidth:'900px',margin:'0 auto',padding:'20px 14px 60px'}}>
+        {feuillesLoading && <div style={{color:'var(--muted)',textAlign:'center',padding:'30px'}}>Chargement...</div>}
+        {!feuillesLoading && mesFeuilles.length===0 && <div style={{color:'var(--muted)',textAlign:'center',padding:'30px'}}>Aucune feuille soumise pour l'instant.</div>}
+        <div style={{display:'flex',flexDirection:'column',gap:'10px'}}>
+          {mesFeuilles.map(f=>(
+            <div key={f.id} onClick={()=>verDetailFeuille(f)} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'14px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:'160px'}}>
+                <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>Semaine du {new Date(f.semaine_du+'T00:00:00').toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
+                <div style={{fontSize:'0.73rem',color:'var(--muted)'}}>{f.chantier_principal}</div>
+              </div>
+              <div style={{fontSize:'0.82rem',color:'var(--blue2)'}}>{Number(f.total_heures||0).toFixed(1)}h</div>
+              <div style={{fontSize:'0.82rem',color:'var(--yellow)'}}>{Number(f.paie_brute||0).toFixed(2)} $</div>
+              <StatutFeuilleBadge statut={f.statut}/>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  if(view==='detailFeuille' && selectedFeuille) return (
+    <div style={{minHeight:'100vh',background:'var(--bg)',fontFamily:"'Outfit',sans-serif"}}>
+      <style>{css}</style>
+      <div style={{background:'var(--navy)',borderBottom:'4px solid',borderImage:'linear-gradient(90deg,#c0623a,#3b82c4) 1'}}>
+        <div style={{maxWidth:'900px',margin:'0 auto',padding:'16px 20px',display:'flex',alignItems:'center',gap:'14px'}}>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.5rem',letterSpacing:'3px',color:'white'}}>Brikma Construction</div>
+            <div style={{fontSize:'0.7rem',color:'var(--brick)',letterSpacing:'2px',textTransform:'uppercase'}}>Détail de la feuille</div>
+          </div>
+          <button onClick={()=>setView('historique')} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem'}}>⬅ Retour</button>
+        </div>
+      </div>
+      <div style={{maxWidth:'900px',margin:'0 auto',padding:'20px 14px 60px'}}>
+        <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'10px'}}>
+          <div>
+            <div style={{fontWeight:'600',color:'white'}}>Semaine du {new Date(selectedFeuille.semaine_du+'T00:00:00').toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
+            <div style={{fontSize:'0.78rem',color:'var(--muted)'}}>{selectedFeuille.chantier_principal}</div>
+          </div>
+          <StatutFeuilleBadge statut={selectedFeuille.statut}/>
+        </div>
+
+        {selectedFeuille.note_patron && (
+          <div style={{background:'rgba(230,168,23,0.1)',border:'1.5px solid var(--yellow)',borderRadius:'9px',padding:'14px 16px',marginBottom:'16px'}}>
+            <div style={{fontSize:'0.68rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--yellow)',marginBottom:'6px'}}>📝 Note du patron</div>
+            <div style={{fontSize:'0.86rem',color:'white'}}>{selectedFeuille.note_patron}</div>
+          </div>
+        )}
+
+        <div style={{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'16px'}}>
+          {selectedJours.map(j=>(
+            <div key={j.id} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'11px 16px',display:'flex',alignItems:'center',gap:'10px',flexWrap:'wrap'}}>
+              <div style={{minWidth:'80px',color:'#a8c4e0',fontWeight:'600',fontSize:'0.85rem'}}>{j.jour_nom}</div>
+              <div style={{fontSize:'0.73rem',color:'var(--muted)',minWidth:'120px'}}>
+                {j.statut==='present'?`${j.arrive||'—'} → ${j.depart||'—'}`:j.statut}
+              </div>
+              <div style={{fontSize:'0.78rem',color:'var(--muted)',flex:1,minWidth:'140px'}}>{j.adresse_chantier}</div>
+              <div style={{fontSize:'0.82rem',color:'var(--green2)'}}>{Number(j.heures_reg||0).toFixed(1)}h reg</div>
+              {Number(j.heures_ot||0)>0 && <div style={{fontSize:'0.82rem',color:'var(--orange)'}}>+{Number(j.heures_ot).toFixed(1)}h OT</div>}
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'10px'}}>
+          {[['Total heures',Number(selectedFeuille.total_heures||0).toFixed(1)+'h','var(--blue2)'],
+            ['Heures OT',Number(selectedFeuille.total_ot||0).toFixed(1)+'h','var(--orange)'],
+            ['Paie brute',Number(selectedFeuille.paie_brute||0).toFixed(2)+' $','var(--yellow)']].map(([lbl,val,clr])=>(
+            <div key={lbl} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'13px',textAlign:'center'}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.3rem',color:clr,marginBottom:'3px'}}>{val}</div>
+              <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'var(--muted)'}}>{lbl}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <div style={{minHeight:'100vh',background:'var(--bg)',fontFamily:"'Outfit',sans-serif"}}>
       <style>{css}</style>
@@ -263,6 +381,7 @@ export default function EmployePunch({employe,onLogout}){
               {saveStatus==='error'&&'⚠️ Erreur sauvegarde'}
             </div>
           </div>
+          <button onClick={verMesFeuilles} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem'}}>📋 Mes feuilles</button>
           <button onClick={onLogout} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem'}}>⬅ Sortir</button>
         </div>
       </div>
