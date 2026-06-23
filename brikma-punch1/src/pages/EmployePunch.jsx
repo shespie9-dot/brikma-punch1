@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 
 const JOURS = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche']
@@ -45,15 +45,126 @@ export default function EmployePunch({employe,onLogout}){
   const [loading,setLoading]=useState(false)
   const [success,setSuccess]=useState(false)
   const [err,setErr]=useState('')
+  const [saveStatus,setSaveStatus]=useState('idle') // idle | saving | saved | error
+  const [savedDays,setSavedDays]=useState(new Set())
+  const [otherBrouillon,setOtherBrouillon]=useState(null)
+
+  const stateRef=useRef(null)
+  const debounceRefs=useRef({})
 
   const dateJour=(i)=>{const d=new Date(lundi);d.setDate(d.getDate()+i);return d}
   const fmtDate=(d)=>d.toLocaleDateString('fr-CA',{day:'2-digit',month:'short'})
   const fmtDateISO=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 
-  function updJour(i,k,v){setJours(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})}
+  useEffect(()=>{
+    stateRef.current={jours,lundi,chantierPrincipal,tauxReg,tauxOT,tauxCCQ,indem}
+  })
+
+  useEffect(()=>{
+    loadWeek(lundi)
+  },[lundi])
+
+  async function loadWeek(lundiDate){
+    const semaineDu=fmtDateISO(lundiDate)
+    const {data}=await supabase.from('brouillons').select('*').eq('employe_id',employe.id).eq('semaine_du',semaineDu).order('jour_index')
+    if(data&&data.length){
+      const first=data[0]
+      setChantierPrincipal(first.chantier_principal||'')
+      setTauxReg(first.taux_reg||0)
+      setTauxOT(first.taux_ot||0)
+      setTauxCCQ(first.taux_ccq||0)
+      setIndem(first.indem||0)
+      setJours(prev=>{
+        const n=[...prev]
+        data.forEach(row=>{
+          const i=row.jour_index
+          if(i>=0&&i<7){
+            n[i]={
+              jour:JOURS[i],
+              arrive:(row.arrive||'').slice(0,5),
+              dinerOut:(row.diner_out||'').slice(0,5),
+              dinerIn:(row.diner_in||'').slice(0,5),
+              depart:(row.depart||'').slice(0,5),
+              statut:row.statut||'absent',
+              type:row.type_travail||'Normal',
+              adresse:row.adresse_chantier||'',
+              otApprouve:row.ot_approuve||false,
+              otRaison:row.ot_raison||'',
+              notes:row.notes||'',
+              typePaie:row.type_paie||employe.type_paie||'hors_decret'
+            }
+          }
+        })
+        return n
+      })
+      setSavedDays(new Set(data.map(r=>r.jour_index)))
+    }else{
+      setSavedDays(new Set())
+    }
+    checkOtherWeeks(semaineDu)
+  }
+
+  async function checkOtherWeeks(semaineDuActuelle){
+    const {data}=await supabase.from('brouillons').select('semaine_du').eq('employe_id',employe.id).neq('semaine_du',semaineDuActuelle).order('semaine_du',{ascending:false}).limit(1)
+    setOtherBrouillon(data&&data.length?data[0].semaine_du:null)
+  }
+
+  function continuerAutre(){
+    if(!otherBrouillon)return
+    setLundi(new Date(otherBrouillon+'T00:00:00'))
+    setOtherBrouillon(null)
+  }
+
+  function scheduleSave(i){
+    setSaveStatus('saving')
+    if(debounceRefs.current[i])clearTimeout(debounceRefs.current[i])
+    debounceRefs.current[i]=setTimeout(()=>doSaveDay(i),1000)
+  }
+  function scheduleSaveAll(){for(let i=0;i<7;i++)scheduleSave(i)}
+
+  async function doSaveDay(i){
+    const s=stateRef.current
+    const d=s.jours[i]
+    const semaineDu=fmtDateISO(s.lundi)
+    const jd=new Date(s.lundi);jd.setDate(jd.getDate()+i)
+    const row={
+      employe_id:employe.id,semaine_du:semaineDu,jour_index:i,
+      jour_nom:d.jour,jour_date:fmtDateISO(jd),
+      statut:d.statut,arrive:d.arrive||null,diner_out:d.dinerOut||null,diner_in:d.dinerIn||null,depart:d.depart||null,
+      adresse_chantier:d.adresse,type_travail:d.type,
+      ot_approuve:d.otApprouve,ot_raison:d.otRaison,notes:d.notes,type_paie:d.typePaie,
+      chantier_principal:s.chantierPrincipal,taux_reg:Number(s.tauxReg)||0,taux_ot:Number(s.tauxOT)||0,
+      taux_ccq:Number(s.tauxCCQ)||0,indem:Number(s.indem)||0,
+      updated_at:new Date().toISOString()
+    }
+    try{
+      const {error}=await supabase.from('brouillons').upsert(row,{onConflict:'employe_id,semaine_du,jour_index'})
+      if(error)throw error
+      setSavedDays(prev=>new Set(prev).add(i))
+      setSaveStatus('saved')
+      setTimeout(()=>setSaveStatus(s2=>s2==='saved'?'idle':s2),2000)
+    }catch(e){
+      setSaveStatus('error')
+    }
+  }
+
+  function updJour(i,k,v){
+    setJours(prev=>{const n=[...prev];n[i]={...n[i],[k]:v};return n})
+    scheduleSave(i)
+  }
   function remplirAdresses(val){
     setChantierPrincipal(val)
     setJours(prev=>prev.map(d=>d.adresse===''||d.adresse===chantierPrincipal?{...d,adresse:val}:d))
+    scheduleSaveAll()
+  }
+  function updHeaderField(setter,val){
+    setter(val)
+    scheduleSaveAll()
+  }
+  function getDayStatus(d,i){
+    if(!savedDays.has(i))return 'empty'
+    if(d.statut==='present'&&(!d.arrive||!d.depart))return 'partial'
+    return 'done'
   }
 
   const totHrs=jours.reduce((s,d)=>s+calcHrs(d),0)
@@ -103,6 +214,9 @@ export default function EmployePunch({employe,onLogout}){
       }))
       const {error:e2}=await supabase.from('jours_travail').insert(joursData)
       if(e2)throw e2
+
+      await supabase.from('brouillons').delete().eq('employe_id',employe.id).eq('semaine_du',semaineDu)
+      setSavedDays(new Set())
       setSuccess(true)
     }catch(e){setErr('Erreur: '+e.message)}
     setLoading(false)
@@ -116,7 +230,13 @@ export default function EmployePunch({employe,onLogout}){
         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.8rem',letterSpacing:'3px',color:'white',marginBottom:'8px'}}>Feuille soumise!</div>
         <div style={{color:'var(--muted)',marginBottom:'8px'}}>Semaine du {lundi.toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
         <div style={{color:'var(--green2)',fontSize:'1.1rem',fontWeight:'600',marginBottom:'24px'}}>{totHrs.toFixed(1)}h travaillées · Paie brute: {paie.total.toFixed(2)} $</div>
-        <button onClick={()=>{setSuccess(false);setJours(JOURS.map((j,i)=>({jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',typePaie:employe.type_paie||'hors_decret'})))}} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
+        <button onClick={()=>{
+          setSuccess(false)
+          setSaveStatus('idle')
+          setSavedDays(new Set())
+          setLundi(getLundi())
+          setJours(JOURS.map((j,i)=>({jour:j,arrive:i<5?'07:00':'',dinerOut:i<5?'12:00':'',dinerIn:i<5?'13:00':'',depart:i<5?'16:00':'',statut:i<5?'present':'absent',type:'Normal',adresse:'',otApprouve:false,otRaison:'',notes:'',typePaie:employe.type_paie||'hors_decret'})))
+        }} style={{background:'var(--blue)',border:'none',color:'white',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',fontWeight:'600',cursor:'pointer',marginRight:'10px'}}>Nouvelle semaine</button>
         <button onClick={onLogout} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'12px 28px',borderRadius:'8px',fontFamily:"'Outfit',sans-serif",fontSize:'0.9rem',cursor:'pointer'}}>Déconnexion</button>
       </div>
     </div>
@@ -136,12 +256,25 @@ export default function EmployePunch({employe,onLogout}){
           <div style={{textAlign:'right'}}>
             <div style={{fontWeight:'600',color:'white',fontSize:'0.9rem'}}>👷 {employe.nom}</div>
             <div style={{fontSize:'0.73rem',color:'var(--muted)'}}>{employe.poste||'Employé'} · {employe.code_acces}</div>
+            <div style={{fontSize:'0.7rem',marginTop:'2px',minHeight:'14px',
+              color:saveStatus==='saving'?'var(--yellow)':saveStatus==='saved'?'var(--green2)':saveStatus==='error'?'var(--red)':'transparent'}}>
+              {saveStatus==='saving'&&'⏳ Sauvegarde...'}
+              {saveStatus==='saved'&&'💾 Sauvegardé'}
+              {saveStatus==='error'&&'⚠️ Erreur sauvegarde'}
+            </div>
           </div>
           <button onClick={onLogout} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'6px 12px',borderRadius:'6px',cursor:'pointer',fontSize:'0.78rem'}}>⬅ Sortir</button>
         </div>
       </div>
 
       <div style={{maxWidth:'900px',margin:'0 auto',padding:'20px 14px 60px'}}>
+
+        {otherBrouillon && (
+          <div style={{background:'rgba(59,130,196,0.12)',border:'1.5px solid var(--blue2)',borderRadius:'9px',padding:'12px 16px',marginBottom:'16px',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'10px'}}>
+            <div style={{fontSize:'0.85rem',color:'var(--blue2)'}}>📝 Tu as une feuille en cours — semaine du {new Date(otherBrouillon+'T00:00:00').toLocaleDateString('fr-CA',{day:'numeric',month:'long'})}</div>
+            <button onClick={continuerAutre} style={{background:'var(--blue2)',border:'none',color:'white',padding:'8px 18px',borderRadius:'6px',fontWeight:'600',fontSize:'0.82rem',cursor:'pointer'}}>Continuer →</button>
+          </div>
+        )}
 
         {/* SEMAINE + CHANTIER */}
         <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'10px',padding:'18px',marginBottom:'16px'}}>
@@ -172,6 +305,9 @@ export default function EmployePunch({employe,onLogout}){
                 <div style={{display:'flex',alignItems:'center',gap:'10px',padding:'11px 16px',borderBottom:'1px solid var(--border)',flexWrap:'wrap',gap:'8px'}}>
                   <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'1.5px',color:'var(--navy) ',minWidth:'80px',color:'#a8c4e0'}}>{d.jour}</div>
                   <div style={{fontSize:'0.73rem',color:'var(--muted)',minWidth:'65px'}}>{fmtDate(dDate)}</div>
+                  <span title="Statut sauvegarde" style={{fontSize:'0.9rem'}}>
+                    {getDayStatus(d,i)==='empty'?'⬜':getDayStatus(d,i)==='partial'?'✏️':'✅'}
+                  </span>
                   <select value={d.statut} onChange={e=>updJour(i,'statut',e.target.value)}
                     style={{padding:'5px 9px',borderRadius:'5px',border:'1.5px solid',fontSize:'0.78rem',fontWeight:'600',cursor:'pointer',outline:'none',
                       borderColor:d.statut==='present'?'var(--green2)':d.statut==='absent'?'var(--red)':d.statut==='conge'?'var(--yellow)':'var(--blue2)',
@@ -279,7 +415,7 @@ export default function EmployePunch({employe,onLogout}){
             ].map(([lbl,val,set,hint])=>(
               <div key={lbl}>
                 <div style={{fontSize:'0.62rem',fontWeight:'700',letterSpacing:'1.5px',textTransform:'uppercase',color:'#8fa8c8',marginBottom:'5px'}}>{lbl}</div>
-                <input type="number" value={val} onChange={e=>set(e.target.value)} placeholder="0.00"
+                <input type="number" value={val} onChange={e=>updHeaderField(set,e.target.value)} placeholder="0.00"
                   style={{width:'100%',background:'rgba(255,255,255,0.1)',border:'1.5px solid rgba(255,255,255,0.2)',color:'white',borderRadius:'6px',padding:'8px 11px',fontSize:'0.86rem',outline:'none'}}/>
                 {hint && <div style={{fontSize:'0.68rem',color:'#6b7a8d',marginTop:'3px'}}>{hint}</div>}
               </div>
@@ -304,7 +440,7 @@ export default function EmployePunch({employe,onLogout}){
 
         <button onClick={soumettre} disabled={loading}
           style={{width:'100%',background:loading?'#3a5070':'var(--brick)',border:'none',color:'white',padding:'14px',borderRadius:'8px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'1.1rem',letterSpacing:'2px',cursor:loading?'not-allowed':'pointer',transition:'all 0.2s'}}>
-          {loading ? 'ENVOI EN COURS...' : 'SOUMETTRE LA FEUILLE →'}
+          {loading ? 'ENVOI EN COURS...' : 'SOUMETTRE AU PATRON →'}
         </button>
       </div>
     </div>
