@@ -14,6 +14,20 @@ const css = `
 const SEUIL_OT = 8
 const TYPES_TRAVAIL = ['Normal','Excavation','Maçonnerie','Charpente','Toiture','Finition','Électricité','Plomberie','Peinture','Nettoyage','Formation','Autre']
 
+const METIERS_CCQ = [
+  'Briqueteur-maçon','Calorifugeur','Carreleur','Charpentier-menuisier','Chaudronnier',
+  'Cimentier-applicateur','Couvreur','Électricien','Ferblantier','Ferrailleur',
+  'Frigoriste','Grutier','Mécanicien de chantier','Mécanicien en protection-incendie',
+  'Monteur-assembleur','Monteur de lignes','Opérateur de pelles mécaniques',
+  'Opérateur d’équipement lourd','Peintre','Plâtrier','Plombier',
+  'Poseur de revêtements souples','Poseur de systèmes intérieurs','Serrurier de bâtiment','Tuyauteur'
+]
+const POSTES_AUTRES = ['Contremaître','Manœuvre','Opérateur machinerie','Aide général']
+const POSTES = [
+  ...METIERS_CCQ.flatMap(m=>[m,`${m} apprenti 1`,`${m} apprenti 2`,`${m} apprenti 3`]),
+  ...POSTES_AUTRES
+]
+
 function toMin(t){if(!t)return 0;const[h,m]=t.split(':').map(Number);return h*60+m}
 function calcHrsJour(j){
   if(j.statut!=='present'||!j.arrive||!j.depart)return 0
@@ -55,10 +69,11 @@ export default function PatronDashboard({onLogout}){
   const [editSaving,setEditSaving]=useState(false)
   const [editMsg,setEditMsg]=useState('')
 
-  // Nouvel employé
+  // Nouvel employé / édition
   const [newEmp,setNewEmp]=useState({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0})
   const [empLoading,setEmpLoading]=useState(false)
   const [empMsg,setEmpMsg]=useState('')
+  const [editEmpId,setEditEmpId]=useState(null)
 
   useEffect(()=>{fetchAll()},[])
 
@@ -177,10 +192,34 @@ export default function PatronDashboard({onLogout}){
   async function ajouterEmploye(){
     if(!newEmp.nom||!newEmp.code_acces){setEmpMsg('Nom et code requis');return}
     setEmpLoading(true); setEmpMsg('')
-    const {error}=await supabase.from('employes').insert({...newEmp,code_acces:newEmp.code_acces.toUpperCase(),actif:true})
-    if(error) setEmpMsg('Erreur: '+(error.message.includes('unique')?'Ce code existe déjà':error.message))
-    else{setEmpMsg('✅ Employé ajouté!');setNewEmp({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0});fetchAll()}
+    const payload={...newEmp,code_acces:newEmp.code_acces.toUpperCase(),
+      taux_regulier:Number(newEmp.taux_regulier)||0,taux_ot:Number(newEmp.taux_ot)||0,taux_ccq:Number(newEmp.taux_ccq)||0}
+    if(editEmpId){
+      const {error}=await supabase.from('employes').update(payload).eq('id',editEmpId)
+      if(error) setEmpMsg('Erreur: '+(error.message.includes('unique')?'Ce code existe déjà':error.message))
+      else{setEmpMsg('✅ Employé modifié!');setEditEmpId(null);setNewEmp({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0});fetchAll()}
+    }else{
+      const {error}=await supabase.from('employes').insert({...payload,actif:true})
+      if(error) setEmpMsg('Erreur: '+(error.message.includes('unique')?'Ce code existe déjà':error.message))
+      else{setEmpMsg('✅ Employé ajouté!');setNewEmp({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0});fetchAll()}
+    }
     setEmpLoading(false)
+  }
+
+  function editEmploye(emp){
+    setEditEmpId(emp.id)
+    setNewEmp({
+      nom:emp.nom||'',code_acces:emp.code_acces||'',poste:emp.poste||'',
+      type_paie:emp.type_paie||'hors_decret',taux_regulier:emp.taux_regulier||0,
+      taux_ot:emp.taux_ot||0,taux_ccq:emp.taux_ccq||0
+    })
+    setEmpMsg('')
+  }
+
+  function cancelEditEmploye(){
+    setEditEmpId(null)
+    setNewEmp({nom:'',code_acces:'',poste:'',type_paie:'hors_decret',taux_regulier:0,taux_ot:0,taux_ccq:0})
+    setEmpMsg('')
   }
 
   async function toggleActif(emp){
@@ -480,35 +519,35 @@ export default function PatronDashboard({onLogout}){
         {/* ── GESTION EMPLOYÉS ── */}
         {view==='employes' && <>
           {/* Ajouter */}
-          <div style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'9px',padding:'16px',marginBottom:'16px'}}>
-            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:'var(--blue2)',marginBottom:'14px'}}>➕ AJOUTER UN EMPLOYÉ</div>
-            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:'10px',marginBottom:'10px'}}>
+          <div style={{background:'var(--card)',border:`1px solid ${editEmpId?'var(--yellow)':'var(--border)'}`,borderRadius:'9px',padding:'16px',marginBottom:'16px'}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:'1rem',letterSpacing:'2px',color:editEmpId?'var(--yellow)':'var(--blue2)',marginBottom:'14px'}}>{editEmpId?'✏️ MODIFIER L’EMPLOYÉ':'➕ AJOUTER UN EMPLOYÉ'}</div>
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 2fr',gap:'10px',marginBottom:'10px'}}>
               <div><label style={labelS}>Nom complet *</label><input value={newEmp.nom} onChange={e=>setNewEmp({...newEmp,nom:e.target.value})} placeholder="ex: Jean Tremblay" style={inputS}/></div>
               <div><label style={labelS}>Code accès * </label><input value={newEmp.code_acces} onChange={e=>setNewEmp({...newEmp,code_acces:e.target.value.toUpperCase()})} placeholder="ex: EMP001" style={inputS}/></div>
               <div><label style={labelS}>Poste</label>
                 <select value={newEmp.poste} onChange={e=>setNewEmp({...newEmp,poste:e.target.value})} style={inputS}>
                   <option value="">-- Poste --</option>
-                  {['Contremaître','Charpentier-menuisier','Briqueteur-maçon','Électricien','Plombier','Manœuvre','Opérateur machinerie','Peintre','Aide général'].map(p=><option key={p}>{p}</option>)}
+                  {POSTES.map(p=><option key={p}>{p}</option>)}
                 </select>
               </div>
             </div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:'10px',marginBottom:'12px'}}>
               <div>
-                <label style={labelS}>Type de paie</label>
+                <label style={labelS}>Type de paie par défaut</label>
                 <select value={newEmp.type_paie} onChange={e=>setNewEmp({...newEmp,type_paie:e.target.value})} style={inputS}>
                   <option value="hors_decret">Hors décret</option>
                   <option value="ccq">CCQ</option>
                 </select>
               </div>
-              {newEmp.type_paie==='ccq' ? (
-                <div><label style={labelS}>Taux CCQ ($/h)</label><input type="number" value={newEmp.taux_ccq} onChange={e=>setNewEmp({...newEmp,taux_ccq:e.target.value})} style={inputS}/></div>
-              ):<>
-                <div><label style={labelS}>Taux régulier ($/h)</label><input type="number" value={newEmp.taux_regulier} onChange={e=>setNewEmp({...newEmp,taux_regulier:e.target.value})} style={inputS}/></div>
-                <div><label style={labelS}>Taux OT ($/h)</label><input type="number" value={newEmp.taux_ot} onChange={e=>setNewEmp({...newEmp,taux_ot:e.target.value})} style={inputS}/></div>
-              </>}
+              <div><label style={labelS}>Taux régulier — décret ($/h)</label><input type="number" value={newEmp.taux_regulier} onChange={e=>setNewEmp({...newEmp,taux_regulier:e.target.value})} style={inputS}/></div>
+              <div><label style={labelS}>Taux OT — décret ($/h)</label><input type="number" value={newEmp.taux_ot} onChange={e=>setNewEmp({...newEmp,taux_ot:e.target.value})} style={inputS}/></div>
+              <div><label style={labelS}>Taux CCQ ($/h)</label><input type="number" value={newEmp.taux_ccq} onChange={e=>setNewEmp({...newEmp,taux_ccq:e.target.value})} style={inputS}/></div>
             </div>
             {empMsg && <div style={{marginBottom:'10px',fontSize:'0.82rem',color:empMsg.includes('✅')?'var(--green2)':'#e57373'}}>{empMsg}</div>}
-            <button onClick={ajouterEmploye} disabled={empLoading} style={{background:'var(--blue)',border:'none',color:'white',padding:'10px 24px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>{empLoading?'...':'AJOUTER →'}</button>
+            <div style={{display:'flex',gap:'10px'}}>
+              <button onClick={ajouterEmploye} disabled={empLoading} style={{background:editEmpId?'var(--yellow)':'var(--blue)',border:'none',color:editEmpId?'#0f1923':'white',padding:'10px 24px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer',fontWeight:editEmpId?'700':'400'}}>{empLoading?'...':editEmpId?'💾 SAUVEGARDER':'AJOUTER →'}</button>
+              {editEmpId && <button onClick={cancelEditEmploye} style={{background:'transparent',border:'1px solid var(--border)',color:'var(--muted)',padding:'10px 24px',borderRadius:'7px',fontFamily:"'Bebas Neue',sans-serif",fontSize:'0.95rem',letterSpacing:'2px',cursor:'pointer'}}>ANNULER</button>}
+            </div>
           </div>
 
           {/* Liste */}
@@ -521,8 +560,9 @@ export default function PatronDashboard({onLogout}){
                 </div>
                 <TypePaieBadge type={emp.type_paie}/>
                 <div style={{fontSize:'0.78rem',color:'var(--muted)'}}>
-                  {emp.type_paie==='ccq'?`CCQ: ${emp.taux_ccq} $/h`:`Rég: ${emp.taux_regulier} $/h · OT: ${emp.taux_ot} $/h`}
+                  Décret: {emp.taux_regulier||0} $/h · OT: {emp.taux_ot||0} $/h · CCQ: {emp.taux_ccq||0} $/h
                 </div>
+                <button onClick={()=>editEmploye(emp)} style={{background:'rgba(59,130,196,0.15)',border:'1px solid var(--blue2)',color:'var(--blue2)',padding:'5px 12px',borderRadius:'5px',fontSize:'0.75rem',fontWeight:'600',cursor:'pointer'}}>✏️ Modifier</button>
                 <button onClick={()=>toggleActif(emp)} style={{background:emp.actif?'rgba(192,57,43,0.15)':'rgba(34,160,96,0.15)',border:`1px solid ${emp.actif?'var(--red)':'var(--green2)'}`,color:emp.actif?'#e57373':'var(--green2)',padding:'5px 12px',borderRadius:'5px',fontSize:'0.75rem',fontWeight:'600',cursor:'pointer'}}>
                   {emp.actif?'Désactiver':'Réactiver'}
                 </button>
